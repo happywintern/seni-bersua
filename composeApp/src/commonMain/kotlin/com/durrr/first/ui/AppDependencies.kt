@@ -8,6 +8,7 @@ import com.durrr.first.data.repo.MenuSyncRepository
 import com.durrr.first.data.repo.RecapRepository
 import com.durrr.first.data.repo.ReceiptRepository
 import com.durrr.first.data.repo.RecapSyncRepository
+import com.durrr.first.data.repo.ServerAuthRepository
 import com.durrr.first.data.repo.SettingsRepository
 import com.durrr.first.data.repo.StockRepository
 import com.durrr.first.data.repo.CashSessionRepository
@@ -23,6 +24,7 @@ class AppDependencies(
     val cashSessionRepository: CashSessionRepository,
     val receiptRepository: ReceiptRepository,
     val recapSyncRepository: RecapSyncRepository,
+    val serverAuthRepository: ServerAuthRepository,
     val settingsRepository: SettingsRepository,
     val orderCacheRepository: OrderCacheRepository,
     val orderSyncRepository: OrderSyncRepository,
@@ -33,4 +35,6 @@ class AppDependencies(
     val launchScanner: () -> Unit,
     val pickImage: ((String?) -> Unit) -> Unit,
     val pickDate: (initialIso: String?, onPicked: (String) -> Unit) -> Unit,
+    val shareText: (subject: String, payload: String) -> Unit,
+    val printHtml: (jobName: String, htmlPayload: String) -> Unit,
 )

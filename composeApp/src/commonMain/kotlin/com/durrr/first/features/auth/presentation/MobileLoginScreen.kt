@@ -22,6 +22,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,20 +34,24 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
+import com.durrr.first.data.repo.ServerAuthRepository
 import com.durrr.first.data.repo.SettingsRepository
 import com.durrr.first.ui.design.AppCard
 import com.durrr.first.ui.design.AppInfoLine
 import com.durrr.first.ui.design.AppPageContainer
 import com.durrr.first.ui.design.AppSectionHeader
 import com.durrr.first.ui.design.Dimens
+import kotlinx.coroutines.launch
 
 private enum class LoginRole { OWNER, CASHIER }
 
 @Composable
 fun MobileLoginScreen(
     settingsRepository: SettingsRepository,
+    serverAuthRepository: ServerAuthRepository? = null,
     onLoginSuccess: () -> Unit,
     onRequireSetup: () -> Unit,
+    onBackgroundInfo: (String) -> Unit = {},
 ) {
     var storeName by remember { mutableStateOf("SuCash") }
     var outletId by remember { mutableStateOf(SettingsRepository.DEFAULT_OUTLET_ID) }
@@ -55,19 +60,19 @@ fun MobileLoginScreen(
     var selectedRole by remember { mutableStateOf(LoginRole.CASHIER) }
     var pin by remember { mutableStateOf("") }
     var pinVisible by remember { mutableStateOf(false) }
+    var serverPairingCode by remember { mutableStateOf("") }
     var ownerSetupPin by remember { mutableStateOf("") }
     var ownerSetupPinVisible by remember { mutableStateOf(false) }
     var showSetupUnlock by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
         storeName = settingsRepository
             .loadReceiptConfig()
             .storeName
             .ifBlank { "SuCash" }
-        outletId = settingsRepository
-            .getValue(SettingsRepository.KEY_OUTLET_ID)
-            .ifBlank { SettingsRepository.DEFAULT_OUTLET_ID }
+        outletId = settingsRepository.resolveOutletId()
         ownerName = settingsRepository
             .getOwnerName()
             ?.ifBlank { null }
@@ -122,6 +127,40 @@ fun MobileLoginScreen(
         }
         pin = ""
         message = null
+        val configuredBaseUrl = settingsRepository.getOptionalServerBaseUrl()
+        if (!configuredBaseUrl.isNullOrBlank() && serverAuthRepository != null) {
+            val scopedOutletId = outletId
+            scope.launch {
+                val currentBearer = settingsRepository
+                    .getActiveUserServerApiBearerToken(scopedOutletId)
+                    ?.trim()
+                    .orEmpty()
+                if (serverPairingCode.isBlank() && currentBearer.isBlank()) {
+                    onBackgroundInfo(
+                        "Login lokal berhasil. Pairing code dari server admin dibutuhkan untuk aktivasi session server."
+                    )
+                } else {
+                    runCatching {
+                        serverAuthRepository.bootstrapSessionForActiveUser(
+                            baseUrl = configuredBaseUrl,
+                            outletId = scopedOutletId,
+                            pairingCode = serverPairingCode.trim().ifBlank { null },
+                        )
+                    }.onSuccess { session ->
+                        if (session != null) {
+                            serverPairingCode = ""
+                            onBackgroundInfo(
+                                "Server session aktif: ${session.role} • ${session.outletId}"
+                            )
+                        }
+                    }.onFailure { error ->
+                        onBackgroundInfo(
+                            "Login lokal berhasil. Session server belum aktif: ${error.message ?: "Unknown error"}"
+                        )
+                    }
+                }
+            }
+        }
         onLoginSuccess()
     }
 
@@ -210,6 +249,22 @@ fun MobileLoginScreen(
                         enabled = roleReady(selectedRole),
                     ) {
                         Text("Masuk")
+                    }
+
+                    if (!settingsRepository.getOptionalServerBaseUrl().isNullOrBlank()) {
+                        OutlinedTextField(
+                            value = serverPairingCode,
+                            onValueChange = { serverPairingCode = it.uppercase().take(16) },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Server Pairing Code") },
+                            placeholder = { Text("Isi kode dari server admin") },
+                            singleLine = true,
+                        )
+                        Text(
+                            text = "Pairing code dibuat dari server admin. Mobile hanya redeem. Kosongkan kalau hanya pakai mode lokal.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
 
                     TextButton(

@@ -10,6 +10,8 @@ object EnvConfig {
     fun get(key: String, defaultValue: String? = null): String? {
         val systemValue = System.getenv(key)?.trim().orEmpty()
         if (systemValue.isNotBlank()) return systemValue
+        val systemPropertyValue = System.getProperty(key)?.trim().orEmpty()
+        if (systemPropertyValue.isNotBlank()) return systemPropertyValue
         val dotenvValue = dotenvValues[key]?.trim().orEmpty()
         if (dotenvValue.isNotBlank()) return dotenvValue
         return defaultValue

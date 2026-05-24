@@ -92,7 +92,7 @@ fun ProductScreen(
     val productGridState = rememberLazyGridState()
     val isOwnerSession = settingsRepository.getActiveUserSession()?.role == SettingsRepository.ROLE_OWNER
 
-    fun currentOutletId(): String = settingsRepository.getValue(SettingsRepository.KEY_OUTLET_ID).ifBlank { SettingsRepository.DEFAULT_OUTLET_ID }
+    fun currentOutletId(): String = settingsRepository.resolveOutletId()
     fun serverBaseUrl(): String? = settingsRepository.getOptionalServerBaseUrl()
 
     fun refresh() {
@@ -228,60 +228,81 @@ fun ProductScreen(
             }
 
             // Search
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                placeholder = { Text("Cari nama atau kode barang...") },
-                leadingIcon = { Text("\uD83D\uDD0D") },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(28.dp),
-                singleLine = true,
-            )
-
-            if (!syncMessage.isNullOrBlank()) {
-                val isError = syncMessage.orEmpty().contains("fail", ignoreCase = true) ||
-                    syncMessage.orEmpty().contains("skip", ignoreCase = true)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(
-                            if (isError) Color(0xFFFFF1F2) else Color(0xFFEEF5FF),
-                            RoundedCornerShape(14.dp),
-                        )
-                        .border(
-                            1.dp,
-                            if (isError) Color(0xFFFFC2CC) else Color(0xFFB7D4FF),
-                            RoundedCornerShape(14.dp),
-                        )
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(if (isError) "\u26A0\uFE0F" else "\u2705")
-                    Text(
-                        syncMessage.orEmpty(),
-                        color = if (isError) Color(0xFF9F1239) else Color(0xFF1D4ED8),
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-            }
-
             AnimatedVisibility(
                 visible = showFilterRows,
                 enter = fadeIn() + expandVertically(),
                 exit = fadeOut() + shrinkVertically(),
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    // Search
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        placeholder = { Text("Cari nama atau kode barang...") },
+                        leadingIcon = { Text("\uD83D\uDD0D") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(28.dp),
+                        singleLine = true,
+                    )
+
+                    // Sync message
+                    if (!syncMessage.isNullOrBlank()) {
+                        val isError = syncMessage.orEmpty().contains("fail", ignoreCase = true) ||
+                            syncMessage.orEmpty().contains("skip", ignoreCase = true) ||
+                            syncMessage.orEmpty().contains("gagal", ignoreCase = true)
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(
+                                    if (isError) Color(0xFFFFF1F2) else Color(0xFFEEF5FF),
+                                    RoundedCornerShape(14.dp),
+                                )
+                                .border(
+                                    1.dp,
+                                    if (isError) Color(0xFFFFC2CC) else Color(0xFFB7D4FF),
+                                    RoundedCornerShape(14.dp),
+                                )
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(if (isError) "\u26A0\uFE0F" else "\u2705")
+
+                            Text(
+                                syncMessage.orEmpty(),
+                                color = if (isError) Color(0xFF9F1239) else Color(0xFF1D4ED8),
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.weight(1f),
+                            )
+
+                            Button(
+                                onClick = { syncMessage = null },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color.Transparent,
+                                    contentColor = if (isError) Color(0xFF9F1239) else Color(0xFF1D4ED8),
+                                ),
+                                elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            ) {
+                                Text("Tutup")
+                            }
+                        }
+                    }
+
+                    // Category tabs
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         items(groupListForTabs.size) { index ->
                             val gid = groupListForTabs[index]
                             FigmaTab(
                                 title = if (gid == null) "Semua" else groupNameMap[gid] ?: "Unknown",
                                 selected = filterGroupId == gid,
-                                onClick = { filterGroupId = gid }
+                                onClick = { filterGroupId = gid },
                             )
                         }
                     }
+
+                    // Status tabs
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         items(OrderabilityFilter.entries.size) { index ->
                             val filter = OrderabilityFilter.entries[index]

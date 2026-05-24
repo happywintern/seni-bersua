@@ -23,7 +23,7 @@ class MenuSyncRepository(
         baseUrl: String,
         outletId: String = SettingsRepository.DEFAULT_OUTLET_ID,
     ) {
-        val bearerToken = requireBearerTokenForServerWrite()
+        val bearerToken = requireBearerTokenForServerWrite(outletId)
         apiClient.resetAllData(
             baseUrl = baseUrl,
             outletId = outletId,
@@ -72,7 +72,10 @@ class MenuSyncRepository(
                             outletId = remoteItem.outletId ?: outletId,
                         )
                         localGroupNameById[canonicalGroupId] = normalizedGroupName
-                        localGroupIdByName.putIfAbsent(normalizeGroupKey(normalizedGroupName), canonicalGroupId)
+                        val groupKey = normalizeGroupKey(normalizedGroupName)
+                        if (!localGroupIdByName.containsKey(groupKey)) {
+                            localGroupIdByName[groupKey] = canonicalGroupId
+                        }
                     }
                     menuRepository.upsertItem(
                         Item(
@@ -117,7 +120,10 @@ class MenuSyncRepository(
                     outletId = remoteItem.outletId ?: outletId,
                 )
                 localGroupNameById[canonicalGroupId] = normalizedGroupName
-                localGroupIdByName.putIfAbsent(normalizeGroupKey(normalizedGroupName), canonicalGroupId)
+                val groupKey = normalizeGroupKey(normalizedGroupName)
+                if (!localGroupIdByName.containsKey(groupKey)) {
+                    localGroupIdByName[groupKey] = canonicalGroupId
+                }
             }
             menuRepository.upsertItem(
                 Item(
@@ -174,7 +180,7 @@ class MenuSyncRepository(
         baseUrl: String,
         outletId: String = SettingsRepository.DEFAULT_OUTLET_ID,
     ): Int {
-        val bearerToken = requireBearerTokenForServerWrite()
+        val bearerToken = requireBearerTokenForServerWrite(outletId)
         val modifierBundles = menuRepository.getModifierGroupBundles(outletId)
         modifierBundles.forEach { bundle ->
             withNetworkRetry {
@@ -253,7 +259,7 @@ class MenuSyncRepository(
         itemId: String,
         outletId: String = SettingsRepository.DEFAULT_OUTLET_ID,
     ) {
-        val bearerToken = requireBearerTokenForServerWrite()
+        val bearerToken = requireBearerTokenForServerWrite(outletId)
         withNetworkRetry {
             apiClient.deleteMenuItem(
                 baseUrl = baseUrl,
@@ -264,15 +270,15 @@ class MenuSyncRepository(
         }
     }
 
-    private fun currentBearerToken(): String? {
-        return settingsRepository?.getActiveUserServerApiBearerToken()
+    private fun currentBearerToken(outletId: String): String? {
+        return settingsRepository?.getActiveUserServerApiBearerToken(outletId)
     }
 
-    private fun requireBearerTokenForServerWrite(): String {
-        val token = currentBearerToken()?.trim().orEmpty()
+    private fun requireBearerTokenForServerWrite(outletId: String): String {
+        val token = currentBearerToken(outletId)?.trim().orEmpty()
         if (token.isNotBlank()) return token
         error(
-            "Owner auth diperlukan. Isi 'Server API Shared Secret' (harus sama dengan SUCASH_API_SHARED_SECRET di server), lalu login ulang sebagai Owner."
+            "Owner auth diperlukan. Pairing server dulu lalu login ulang sebagai Owner."
         )
     }
 
@@ -360,7 +366,7 @@ class MenuSyncRepository(
     }
 
     private fun normalizeGroupKey(name: String): String {
-        return name.trim()
+        return CatalogNameRules.normalize(name)
             .lowercase()
             .replace(Regex("[^a-z0-9]+"), " ")
             .replace(Regex("\\s+"), " ")

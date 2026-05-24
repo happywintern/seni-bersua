@@ -21,6 +21,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
+import com.durrr.first.core.utils.formatReadableDateTime
 import com.durrr.first.core.utils.formatRupiah
 import com.durrr.first.data.repo.CashFlowRepository
 import com.durrr.first.data.repo.CashSessionRepository
@@ -60,9 +61,7 @@ fun CashFlowScreen(
     val scope = rememberCoroutineScope()
 
     fun currentOutletId(): String {
-        return settingsRepository
-            .getValue(SettingsRepository.KEY_OUTLET_ID)
-            .ifBlank { SettingsRepository.DEFAULT_OUTLET_ID }
+        return settingsRepository.resolveOutletId()
     }
 
     fun load() {
@@ -318,7 +317,7 @@ fun CashFlowScreen(
                     AppCard {
                         Column(verticalArrangement = Arrangement.spacedBy(Dimens.xxs)) {
                             Text(entry.transaksiId ?: "-", fontWeight = FontWeight.SemiBold)
-                            Text("Tanggal: ${entry.dateTime?.take(19) ?: "-"}")
+                            Text("Tanggal: ${formatReadableDateTime(entry.dateTime)}")
                             Text("Metode: ${entry.methodName}")
                             Text("Nominal: ${formatRupiah(entry.amount)}")
                         }

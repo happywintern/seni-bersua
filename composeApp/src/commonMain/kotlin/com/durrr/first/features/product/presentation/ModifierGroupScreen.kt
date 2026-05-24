@@ -37,6 +37,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.durrr.first.data.repo.MenuRepository
 import com.durrr.first.data.repo.SettingsRepository
+import com.durrr.first.data.repo.CatalogNameRules
 import com.durrr.first.domain.model.ModifierGroup
 import com.durrr.first.domain.model.ModifierGroupBundle
 import com.durrr.first.domain.model.ModifierOption
@@ -66,8 +67,7 @@ fun ModifierGroupScreen(
     var statusMessage by remember { mutableStateOf<String?>(null) }
 
     fun currentOutletId(): String {
-        return settingsRepository.getValue(SettingsRepository.KEY_OUTLET_ID)
-            .ifBlank { SettingsRepository.DEFAULT_OUTLET_ID }
+        return settingsRepository.resolveOutletId()
     }
 
     fun refresh() {
@@ -95,9 +95,9 @@ fun ModifierGroupScreen(
     }
 
     fun save() {
-        val name = groupName.trim()
+        val name = CatalogNameRules.normalize(groupName)
         if (name.isBlank()) {
-            statusMessage = "Nama modifier group wajib diisi."
+            statusMessage = "Nama modifier wajib ASCII terbaca (maks ${CatalogNameRules.MAX_LENGTH} karakter)."
             return
         }
 
@@ -109,9 +109,11 @@ fun ModifierGroupScreen(
             }
         }
 
-        val validOptions = optionsDrafts.filter { it.name.isNotBlank() }
+        val validOptions = optionsDrafts
+            .map { it.copy(name = CatalogNameRules.normalize(it.name)) }
+            .filter { it.name.isNotBlank() }
         if (validOptions.isEmpty()) {
-            statusMessage = "Minimal isi satu opsi modifier dengan nama."
+            statusMessage = "Minimal isi satu opsi modifier dengan nama ASCII."
             return
         }
 
@@ -120,7 +122,7 @@ fun ModifierGroupScreen(
             ModifierOption(
                 id = IdGenerator.newId("modopt_"),
                 groupId = groupId,
-                name = draft.name.trim(),
+                name = draft.name,
                 priceDelta = draft.price.toLongOrNull() ?: 0L,
                 order = index + 1,
                 isDefault = index == 0 && selectionType == "SINGLE",

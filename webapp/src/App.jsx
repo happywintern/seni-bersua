@@ -1,4 +1,4 @@
-import React, { useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import logoImage from "./assets/images/logo.png";
 import rendaSesuaImage from "./assets/images/renda_sesua.png";
 import rendaHorizontal from "./assets/images/renda_horizontal.png";
@@ -6,61 +6,72 @@ import MenuPage from "./MenuPage";
 import AboutPage from "./AboutPage";
 import ReservationPage from "./ReservationPage";
 import ContactPage from "./ContactPage";
+import WebAdminPage from "./WebAdminPage";
+import { fetchMenuItemsFromServer } from "./menuCatalogApi";
+import { getOutletId } from "./serverConfig";
 
-const menuItems = [
+const fallbackMenuItems = [
   {
+    id: "fallback-home-1",
     name: "Signature Espresso",
     ingredients: "Espresso shot, susu segar, crema lembut",
-    price: "Rp 35.000",
+    priceLabel: "Rp 35.000",
     accent: "#f0e6d3",
     emoji: "☕",
   },
   {
+    id: "fallback-home-2",
     name: "Caramel Latte",
     ingredients: "Espresso, susu whole milk, sirup karamel",
-    price: "Rp 42.000",
+    priceLabel: "Rp 42.000",
     accent: "#e8d5c4",
     emoji: "🥛",
   },
   {
+    id: "fallback-home-3",
     name: "Iced Americano",
     ingredients: "Double espresso, air dingin, es batu",
-    price: "Rp 32.000",
+    priceLabel: "Rp 32.000",
     accent: "#d4e8f0",
     emoji: "🧊",
   },
   {
+    id: "fallback-home-4",
     name: "Vanilla Cappuccino",
     ingredients: "Espresso, foam susu, vanilla bean",
-    price: "Rp 45.000",
+    priceLabel: "Rp 45.000",
     accent: "#f5e6d0",
     emoji: "🫧",
   },
   {
+    id: "fallback-home-5",
     name: "Matcha Sesua",
     ingredients: "Matcha premium, susu oat, madu",
-    price: "Rp 48.000",
+    priceLabel: "Rp 48.000",
     accent: "#e8f0e4",
     emoji: "🍵",
   },
   {
+    id: "fallback-home-6",
     name: "Mocha Velvet",
     ingredients: "Espresso, dark chocolate, susu, whip",
-    price: "Rp 50.000",
+    priceLabel: "Rp 50.000",
     accent: "#f0d5e8",
     emoji: "🍫",
   },
   {
+    id: "fallback-home-7",
     name: "Cold Brew Classic",
     ingredients: "Kopi Arabica, diseduh 12 jam, es",
-    price: "Rp 38.000",
+    priceLabel: "Rp 38.000",
     accent: "#f5ecd4",
     emoji: "🧇",
   },
   {
+    id: "fallback-home-8",
     name: "Blue Sky Latte",
     ingredients: "Butterfly pea, lemon, susu segar",
-    price: "Rp 43.000",
+    priceLabel: "Rp 43.000",
     accent: "#dce8f5",
     emoji: "💙",
   },
@@ -97,10 +108,42 @@ const stats = [
 
 function App() {
   const menuCarouselRef = useRef(null);
+  const [menuItems, setMenuItems] = useState(fallbackMenuItems);
+  const [menuLoadError, setMenuLoadError] = useState("");
   const isMenuPage = window.location.pathname === "/web/menu";
   const isAboutPage = window.location.pathname === "/web/about";
   const isReservationPage = window.location.pathname === "/web/reservasi";
   const isContactPage = window.location.pathname === "/web/kontak";
+  const isWebAdminPage = window.location.pathname === "/web/admin";
+
+  useEffect(() => {
+    let active = true;
+    async function loadMenuForHomepage() {
+      try {
+        const remoteMenu = await fetchMenuItemsFromServer(getOutletId());
+        if (!active) return;
+        if (remoteMenu.length > 0) {
+          setMenuItems(remoteMenu.slice(0, 12));
+          setMenuLoadError("");
+        }
+      } catch (error) {
+        if (!active) return;
+        setMenuItems(fallbackMenuItems);
+        setMenuLoadError(error?.message || "Menu server belum tersedia.");
+      }
+    }
+    loadMenuForHomepage();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const menuSubtitle = useMemo(() => {
+    if (menuLoadError) {
+      return "Menampilkan menu default sementara. Atur outlet di /web/admin agar sinkron dengan server.";
+    }
+    return "Nikmati keseimbangan rasa sempurna dalam setiap menu pilihan kami.";
+  }, [menuLoadError]);
 
   function scrollCarousel(direction) {
     const element = menuCarouselRef.current;
@@ -139,6 +182,10 @@ function App() {
     window.location.href = "/web/kontak";
   }
 
+  function navigateToWebAdminPage() {
+    window.location.href = "/web/admin";
+  }
+
   return (
     <div className="page-shell">
       <nav className="topbar">
@@ -154,6 +201,7 @@ function App() {
           <button type="button" onClick={navigateToReservationPage}>Reservasi</button>
           <button type="button" onClick={() => navigateToSection("event")}>Event</button>
           <button type="button" onClick={navigateToContactPage}>Kontak Kami</button>
+          <button type="button" onClick={navigateToWebAdminPage}>Admin</button>
         </div>
       </nav>
 
@@ -166,6 +214,8 @@ function App() {
           <ReservationPage />
         ) : isContactPage ? (
           <ContactPage />
+        ) : isWebAdminPage ? (
+          <WebAdminPage />
         ) : (
           <>
             <section className="hero" id="beranda">
@@ -180,7 +230,7 @@ function App() {
           <div className="menu-header">
             <div className="section-label">Menu Pilihan</div>
             <div className="section-title">Eksplorasi Rasa di Setiap Cangkir</div>
-            <div className="section-sub">Nikmati keseimbangan rasa sempurna dalam setiap menu pilihan kami.</div>
+            <div className="section-sub">{menuSubtitle}</div>
           </div>
 
           <div className="menu-carousel-wrap">
@@ -189,14 +239,18 @@ function App() {
             </button>
             <div className="menu-carousel" ref={menuCarouselRef}>
               {menuItems.map((item) => (
-                <article key={item.name} className="menu-card">
+                <article key={item.id || item.name} className="menu-card">
                   <div className="menu-card-img">
-                    <div className="coffee-placeholder" style={{ background: item.accent }}>{item.emoji}</div>
+                    {item.imageUrl ? (
+                      <img src={item.imageUrl} alt={item.name} className="menu-page-card-photo" />
+                    ) : (
+                      <div className="coffee-placeholder" style={{ background: item.accent }}>{item.emoji}</div>
+                    )}
                   </div>
                   <div className="menu-card-body">
                     <div className="menu-card-name">{item.name}</div>
                     <div className="menu-card-ingredients">{item.ingredients}</div>
-                    <div className="menu-card-price">{item.price}</div>
+                    <div className="menu-card-price">{item.priceLabel || item.price}</div>
                   </div>
                 </article>
               ))}

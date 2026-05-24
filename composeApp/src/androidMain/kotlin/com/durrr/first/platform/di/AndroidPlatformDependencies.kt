@@ -11,11 +11,15 @@ fun rememberAndroidPlatformDependencies(
     launchScanner: () -> Unit,
     pickImage: ((String?) -> Unit) -> Unit = { onPicked -> onPicked(null) },
     pickDate: (initialIso: String?, onPicked: (String) -> Unit) -> Unit = { _, _ -> },
+    shareText: (subject: String, payload: String) -> Unit = { _, _ -> },
+    printHtml: (jobName: String, htmlPayload: String) -> Unit = { _, _ -> },
 ): AppDependencies {
     return rememberAppDependencies(
         context = context,
         launchScanner = launchScanner,
         pickImage = pickImage,
         pickDate = pickDate,
+        shareText = shareText,
+        printHtml = printHtml,
     )
 }

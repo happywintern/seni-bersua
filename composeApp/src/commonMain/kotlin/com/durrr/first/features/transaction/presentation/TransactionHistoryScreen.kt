@@ -21,6 +21,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import com.durrr.first.core.utils.formatReadableDateTime
 import com.durrr.first.core.utils.formatNumber
 import com.durrr.first.core.utils.formatRupiah
 import com.durrr.first.data.repo.SettingsRepository
@@ -46,9 +47,7 @@ fun TransactionHistoryScreen(
     val scope = rememberCoroutineScope()
 
     fun currentOutletId(): String {
-        return settingsRepository
-            .getValue(SettingsRepository.KEY_OUTLET_ID)
-            .ifBlank { SettingsRepository.DEFAULT_OUTLET_ID }
+        return settingsRepository.resolveOutletId()
     }
 
     suspend fun loadHistory() {
@@ -162,7 +161,7 @@ private fun TransactionHistoryRow(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    normalizeDateTime(transaksi.createdAt),
+                    formatReadableDateTime(transaksi.createdAt),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -192,11 +191,4 @@ private fun TransactionHistoryRow(
             }
         }
     }
-}
-
-private fun normalizeDateTime(value: String): String {
-    if (value.isBlank()) return "-"
-    return value
-        .replace('T', ' ')
-        .removeSuffix("Z")
 }

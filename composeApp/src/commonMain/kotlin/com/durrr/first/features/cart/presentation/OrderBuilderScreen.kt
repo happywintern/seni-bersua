@@ -50,6 +50,8 @@ import com.durrr.first.domain.model.ModifierGroupBundle
 import com.durrr.first.domain.model.ModifierOption
 import com.durrr.first.domain.service.IdGenerator
 import com.durrr.first.features.cart.domain.OrderDraft
+import com.durrr.first.features.cart.domain.OrderBuilderCartSnapshot
+import com.durrr.first.features.cart.domain.OrderBuilderCartStore
 import com.durrr.first.features.cart.domain.OrderDraftLine
 import com.durrr.first.features.cart.domain.OrderDraftModifierSelection
 import com.durrr.first.features.cart.domain.OrderDraftStore
@@ -61,6 +63,12 @@ private data class DraftCartItem(
     val basePrice: Long,
     val price: Long,
     val modifiers: List<OrderDraftModifierSelection>,
+)
+
+private data class CategoryTabModel(
+    val key: String,
+    val label: String,
+    val groupIds: Set<String?>,
 )
 
 private val FigmaBlue = Color(0xFF273BBF)
@@ -82,14 +90,57 @@ fun OrderBuilderScreen(
     var cartItems by remember { mutableStateOf(emptyList<DraftCartItem>()) }
     var tableToken by remember { mutableStateOf("") }
     var searchQuery by remember { mutableStateOf("") }
-    var selectedGroupId by remember { mutableStateOf<String?>(null) }
+    var selectedCategoryKey by remember { mutableStateOf("ALL") }
     var syncMessage by remember { mutableStateOf<String?>(null) }
     var expandedModifierItemId by remember { mutableStateOf<String?>(null) }
     var modifierBundleByItemId by remember { mutableStateOf<Map<String, List<ModifierGroupBundle>>>(emptyMap()) }
     var pendingSelectionByItemId by remember { mutableStateOf<Map<String, Map<String, Set<String>>>>(emptyMap()) }
+    var cartSnapshotLoaded by remember { mutableStateOf(false) }
 
     fun serverBaseUrl(): String? = settingsRepository.getOptionalServerBaseUrl()
-    fun currentOutletId(): String = settingsRepository.getValue(SettingsRepository.KEY_OUTLET_ID).ifBlank { SettingsRepository.DEFAULT_OUTLET_ID }
+    fun currentOutletId(): String = settingsRepository.resolveOutletId()
+
+    fun cartSnapshotFromCurrentState(): OrderBuilderCartSnapshot {
+        return OrderBuilderCartSnapshot(
+            tableToken = tableToken.ifBlank { null },
+            lines = cartItems.map {
+                OrderDraftLine(
+                    itemId = it.item.id,
+                    itemName = it.item.name,
+                    qty = it.qty,
+                    basePrice = it.basePrice,
+                    price = it.price,
+                    modifiers = it.modifiers,
+                )
+            },
+        )
+    }
+
+    fun restoreCartSnapshotIfExists() {
+        val snapshot = OrderBuilderCartStore.getSnapshot(currentOutletId()) ?: return
+        val menuById = menuItems.associateBy { it.id }
+        cartItems = snapshot.lines.mapNotNull { line ->
+            val lineItemId = line.itemId ?: return@mapNotNull null
+            val item = menuById[lineItemId] ?: Item(
+                id = lineItemId,
+                name = line.itemName,
+                price = line.basePrice,
+                groupId = null,
+                code = null,
+                imageUrl = null,
+                isActive = true,
+                outletId = currentOutletId(),
+            )
+            DraftCartItem(
+                item = item,
+                qty = line.qty,
+                basePrice = line.basePrice,
+                price = line.price,
+                modifiers = line.modifiers,
+            )
+        }
+        tableToken = snapshot.tableToken.orEmpty()
+    }
 
     fun loadModifierBundles(itemId: String): List<ModifierGroupBundle> {
         modifierBundleByItemId[itemId]?.let { return it }
@@ -218,19 +269,65 @@ fun OrderBuilderScreen(
         }
     }
 
-    LaunchedEffect(Unit) { refreshMenuFromServer() }
+    LaunchedEffect(Unit) {
+        refreshMenuFromServer()
+        restoreCartSnapshotIfExists()
+        cartSnapshotLoaded = true
+    }
     LaunchedEffect(scannedToken) {
         if (!scannedToken.isNullOrBlank()) {
             tableToken = scannedToken
             onScannedTokenConsumed()
         }
     }
+    LaunchedEffect(cartSnapshotLoaded, cartItems, tableToken) {
+        if (!cartSnapshotLoaded) return@LaunchedEffect
+        OrderBuilderCartStore.putSnapshot(
+            outletId = currentOutletId(),
+            snapshot = cartSnapshotFromCurrentState(),
+        )
+    }
 
-    val groupNameMap = remember(menuGroups) { menuGroups.associate { it.id to it.name } }
-    val groups = listOf(null) + menuItems.mapNotNull { it.groupId }.distinct()
+    val groupNameMap = remember(menuGroups) {
+        menuGroups
+            .mapValuesById()
+    }
+    val resolveCategoryLabel: (Item) -> String = { item ->
+        item.groupId
+            ?.let { groupNameMap[it] }
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: "Tanpa Kategori"
+    }
+    val categoryTabs = remember(menuItems, groupNameMap) {
+        val buckets = linkedMapOf<String, Pair<String, LinkedHashSet<String?>>>()
+        menuItems.forEach { item ->
+            val label = resolveCategoryLabel(item)
+            val normalized = label.lowercase()
+            val current = buckets[normalized]
+            if (current == null) {
+                buckets[normalized] = label to linkedSetOf(item.groupId)
+            } else {
+                current.second += item.groupId
+            }
+        }
+        buildList {
+            add(CategoryTabModel(key = "ALL", label = "Semua Produk", groupIds = emptySet()))
+            buckets.forEach { (key, value) ->
+                add(
+                    CategoryTabModel(
+                        key = key,
+                        label = value.first,
+                        groupIds = value.second.toSet(),
+                    )
+                )
+            }
+        }
+    }
+    val selectedCategory = categoryTabs.firstOrNull { it.key == selectedCategoryKey } ?: categoryTabs.first()
     val filteredMenu = menuItems.filter { item ->
         (searchQuery.isBlank() || item.name.contains(searchQuery, true) || item.code.orEmpty().contains(searchQuery, true)) &&
-            (selectedGroupId == null || item.groupId == selectedGroupId)
+            (selectedCategory.key == "ALL" || selectedCategory.groupIds.contains(item.groupId))
     }
     val itemCount = cartItems.sumOf { it.qty }
 
@@ -257,26 +354,26 @@ fun OrderBuilderScreen(
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
-                    value = tableToken,
-                    onValueChange = { tableToken = it },
-                    placeholder = { Text("Token / Meja") },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f),
-                )
-                OutlinedButton(onClick = launchScanner, modifier = Modifier.heightIn(min = 52.dp)) {
-                    Text("Scan QR")
-                }
-            }
+//            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+//                OutlinedTextField(
+//                    value = tableToken,
+//                    onValueChange = { tableToken = it },
+//                    placeholder = { Text("Token / Meja") },
+//                    singleLine = true,
+//                    modifier = Modifier.weight(1f),
+//                )
+//                OutlinedButton(onClick = launchScanner, modifier = Modifier.heightIn(min = 52.dp)) {
+//                    Text("Scan QR")
+//                }
+//            }
 
             LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                items(groups.size) { index ->
-                    val groupId = groups[index]
+                items(categoryTabs.size) { index ->
+                    val tab = categoryTabs[index]
                     FigmaTab(
-                        title = if (groupId == null) "Semua Produk" else groupNameMap[groupId] ?: inferGroupName(itemName = menuItems.firstOrNull { it.groupId == groupId }?.name),
-                        selected = selectedGroupId == groupId,
-                        onClick = { selectedGroupId = groupId },
+                        title = tab.label,
+                        selected = selectedCategoryKey == tab.key,
+                        onClick = { selectedCategoryKey = tab.key },
                     )
                 }
             }
@@ -300,7 +397,7 @@ fun OrderBuilderScreen(
 
                     ProductCard(
                         item = item,
-                        groupName = groupNameMap[item.groupId] ?: inferGroupName(item.name),
+                        groupName = resolveCategoryLabel(item),
                         quantity = itemQty,
                         modifierBundles = bundles,
                         modifierSelectionByGroup = selectionMap,
@@ -378,12 +475,9 @@ fun OrderBuilderScreen(
     }
 }
 
-private fun inferGroupName(itemName: String?): String {
-    val text = itemName.orEmpty().lowercase()
-    return when {
-        text.contains("coffee") || text.contains("kopi") || text.contains("latte") ||
-            text.contains("espresso") || text.contains("cappuccino") || text.contains("macchiato") -> "Coffee"
-        else -> "Non-Coffee"
+private fun List<GroupItem>.mapValuesById(): Map<String, String> {
+    return associate { group ->
+        group.id to group.name
     }
 }
 

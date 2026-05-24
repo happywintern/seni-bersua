@@ -50,6 +50,18 @@ private data class SetupCategoryDraft(
     val name: String = "",
 )
 
+private enum class SetupWizardPath {
+    LOCAL_ONLY,
+    CONNECT_SERVER,
+}
+
+private enum class SetupWizardStep {
+    PATH,
+    DETAILS,
+    SERVER,
+    REVIEW,
+}
+
 @Composable
 fun LocalFirstSetupScreen(
     settingsRepository: SettingsRepository,
@@ -76,6 +88,9 @@ fun LocalFirstSetupScreen(
     var autoServicePercent by remember { mutableStateOf("10") }
     var autoRounding by remember { mutableStateOf("0") }
     var openingCashText by remember { mutableStateOf("0") }
+    var wizardPath by remember { mutableStateOf(SetupWizardPath.LOCAL_ONLY) }
+    var wizardStep by remember { mutableStateOf(SetupWizardStep.PATH) }
+    var serverBaseUrl by remember { mutableStateOf("") }
     var starterCategoryDrafts by remember {
         mutableStateOf(defaultStarterCategoryNames().map { SetupCategoryDraft(it) })
     }
@@ -87,8 +102,7 @@ fun LocalFirstSetupScreen(
         val config = settingsRepository.loadReceiptConfig()
         storeName = config.storeName.ifBlank { "SuCash" }
         storeAddress = config.storeAddressOrPhone
-        outletId = settingsRepository.getValue(SettingsRepository.KEY_OUTLET_ID)
-            .ifBlank { SettingsRepository.DEFAULT_OUTLET_ID }
+        outletId = settingsRepository.resolveOutletId()
         ownerName = settingsRepository.getValue(SettingsRepository.KEY_OWNER_NAME)
             .ifBlank { "Owner" }
         cashierId = settingsRepository.getValue(SettingsRepository.KEY_DEFAULT_CASHIER_ID)
@@ -100,6 +114,7 @@ fun LocalFirstSetupScreen(
             .ifBlank { "10" }
         autoRounding = settingsRepository.getValue(SettingsRepository.KEY_AUTO_ROUNDING)
             .ifBlank { "0" }
+        serverBaseUrl = settingsRepository.getValue(SettingsRepository.KEY_SERVER_BASE_URL)
         ownerPin = settingsRepository.getValue(SettingsRepository.KEY_OWNER_PIN)
             .filter(Char::isDigit)
             .take(6)
@@ -119,6 +134,8 @@ fun LocalFirstSetupScreen(
         cashierPin = cashierPin,
         cashierPinConfirm = cashierPinConfirm,
     )
+    val connectToServer = wizardPath == SetupWizardPath.CONNECT_SERVER
+    val canContinueFromDetails = validationError == null
 
     AppPageContainer {
         BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
@@ -135,87 +152,93 @@ fun LocalFirstSetupScreen(
                 AppCard {
                     Column(verticalArrangement = Arrangement.spacedBy(Dimens.md)) {
                         AppSectionHeader(
-                            title = "Setup Mobile First",
-                            subtitle = "Siapkan tablet ini dulu. Server tetap bisa dipasang nanti dari Pengaturan.",
+                            title = "Setup Wizard",
+                            subtitle = "Ikuti langkah singkat ini supaya onboarding cepat dan jelas.",
                         )
-                        if (wide) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(Dimens.xs),
-                            ) {
-                                AppStatusPill(label = "Local First")
-                                AppStatusPill(
-                                    label = "Server Optional",
-                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                                )
-                                AppStatusPill(
-                                    label = "Sync Later",
-                                    containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                                    contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
-                                )
-                            }
-                        } else {
-                            Column(verticalArrangement = Arrangement.spacedBy(Dimens.xs)) {
-                                AppStatusPill(label = "Local First")
-                                AppStatusPill(
-                                    label = "Server Optional",
-                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                                )
-                                AppStatusPill(
-                                    label = "Sync Later",
-                                    containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                                    contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
-                                )
-                            }
-                        }
+                        AppStatusPill(
+                            label = when (wizardStep) {
+                                SetupWizardStep.PATH -> "Step 1/4 · Mode"
+                                SetupWizardStep.DETAILS -> "Step 2/4 · Data Toko"
+                                SetupWizardStep.SERVER -> "Step 3/4 · Koneksi Server"
+                                SetupWizardStep.REVIEW -> "Step 4/4 · Review"
+                            },
+                        )
                         if (wide) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(Dimens.md),
                             ) {
-                                SetupQuickInfo(
-                                    title = "Sesudah setup",
-                                    lines = listOf(
-                                        "POS langsung bisa dipakai tanpa server",
-                                        "Menu, modifier, transaksi, dan recap tersimpan lokal",
-                                    ),
+                                SetupPathChoiceCard(
+                                    title = "Local Only",
+                                    subtitle = "Langsung transaksi offline dulu. Server bisa disambung nanti.",
+                                    selected = wizardPath == SetupWizardPath.LOCAL_ONLY,
+                                    onSelect = { wizardPath = SetupWizardPath.LOCAL_ONLY },
                                     modifier = Modifier.weight(1f),
                                 )
-                                SetupQuickInfo(
-                                    title = "Bisa diubah nanti",
-                                    lines = listOf(
-                                        "Pajak, service, saldo awal, dan kategori starter",
-                                        "Pairing server, sinkronisasi, dan reset data",
-                                    ),
+                                SetupPathChoiceCard(
+                                    title = "Connect to Server",
+                                    subtitle = "Sekalian isi URL server saat setup, lalu pairing setelah login.",
+                                    selected = wizardPath == SetupWizardPath.CONNECT_SERVER,
+                                    onSelect = { wizardPath = SetupWizardPath.CONNECT_SERVER },
                                     modifier = Modifier.weight(1f),
                                 )
                             }
                         } else {
-                            SetupQuickInfo(
-                                title = "Sesudah setup",
-                                lines = listOf(
-                                    "POS langsung bisa dipakai tanpa server",
-                                    "Menu, modifier, transaksi, dan recap tersimpan lokal",
-                                ),
-                            )
-                            SetupQuickInfo(
-                                title = "Bisa diubah nanti",
-                                lines = listOf(
-                                    "Pajak, service, saldo awal, dan kategori starter",
-                                    "Pairing server, sinkronisasi, dan reset data",
-                                ),
-                            )
+                            Column(verticalArrangement = Arrangement.spacedBy(Dimens.xs)) {
+                                SetupPathChoiceCard(
+                                    title = "Local Only",
+                                    subtitle = "Transaksi offline dulu, pairing belakangan.",
+                                    selected = wizardPath == SetupWizardPath.LOCAL_ONLY,
+                                    onSelect = { wizardPath = SetupWizardPath.LOCAL_ONLY },
+                                )
+                                SetupPathChoiceCard(
+                                    title = "Connect to Server",
+                                    subtitle = "Isi URL server saat setup, pairing setelah login.",
+                                    selected = wizardPath == SetupWizardPath.CONNECT_SERVER,
+                                    onSelect = { wizardPath = SetupWizardPath.CONNECT_SERVER },
+                                )
+                            }
                         }
+                        SetupQuickInfo(
+                            title = "Panduan langkah",
+                            lines = listOf(
+                                "Step 1: pilih mode Local Only atau Connect to Server",
+                                "Step 2: isi data toko + akun lokal",
+                                "Step 3: (opsional) isi URL server",
+                                "Step 4: review lalu simpan",
+                            ),
+                        )
                     }
                 }
 
-                if (wide) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(Dimens.md),
-                    ) {
+                if (wizardStep == SetupWizardStep.DETAILS) {
+                    if (wide) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(Dimens.md),
+                        ) {
+                            SetupOutletCard(
+                                storeName = storeName,
+                                onStoreNameChange = { storeName = it },
+                                storeAddress = storeAddress,
+                                onStoreAddressChange = { storeAddress = it },
+                                outletId = outletId,
+                                onOutletIdChange = { outletId = it },
+                                modifier = Modifier.weight(1f),
+                            )
+                            SetupDefaultsCard(
+                                autoTaxPercent = autoTaxPercent,
+                                onAutoTaxPercentChange = { autoTaxPercent = it.filter(Char::isDigit) },
+                                autoServicePercent = autoServicePercent,
+                                onAutoServicePercentChange = { autoServicePercent = it.filter(Char::isDigit) },
+                                autoRounding = autoRounding,
+                                onAutoRoundingChange = {
+                                    autoRounding = it.filter { char -> char.isDigit() || char == '-' }
+                                },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    } else {
                         SetupOutletCard(
                             storeName = storeName,
                             onStoreNameChange = { storeName = it },
@@ -223,7 +246,6 @@ fun LocalFirstSetupScreen(
                             onStoreAddressChange = { storeAddress = it },
                             outletId = outletId,
                             onOutletIdChange = { outletId = it },
-                            modifier = Modifier.weight(1f),
                         )
                         SetupDefaultsCard(
                             autoTaxPercent = autoTaxPercent,
@@ -234,38 +256,59 @@ fun LocalFirstSetupScreen(
                             onAutoRoundingChange = {
                                 autoRounding = it.filter { char -> char.isDigit() || char == '-' }
                             },
-                            modifier = Modifier.weight(1f),
                         )
                     }
-                } else {
-                    SetupOutletCard(
-                        storeName = storeName,
-                        onStoreNameChange = { storeName = it },
-                        storeAddress = storeAddress,
-                        onStoreAddressChange = { storeAddress = it },
-                        outletId = outletId,
-                        onOutletIdChange = { outletId = it },
-                    )
-                    SetupDefaultsCard(
-                        autoTaxPercent = autoTaxPercent,
-                        onAutoTaxPercentChange = { autoTaxPercent = it.filter(Char::isDigit) },
-                        autoServicePercent = autoServicePercent,
-                        onAutoServicePercentChange = { autoServicePercent = it.filter(Char::isDigit) },
-                        autoRounding = autoRounding,
-                        onAutoRoundingChange = {
-                            autoRounding = it.filter { char -> char.isDigit() || char == '-' }
-                        },
-                    )
-                }
 
-                AppCard {
-                    Column(verticalArrangement = Arrangement.spacedBy(Dimens.md)) {
-                        AppSectionHeader("Akun Lokal", "Pisahkan akses owner dan staff agar transaksi lebih rapi.")
-                        if (wide) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(Dimens.md),
-                            ) {
+                    AppCard {
+                        Column(verticalArrangement = Arrangement.spacedBy(Dimens.md)) {
+                            AppSectionHeader("Akun Lokal", "Pisahkan akses owner dan staff agar transaksi lebih rapi.")
+                            if (wide) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(Dimens.md),
+                                ) {
+                                    AccountRoleCard(
+                                        title = "Owner",
+                                        subtitle = "Untuk pengaturan penting dan kontrol perangkat.",
+                                        name = ownerName,
+                                        onNameChange = { ownerName = it },
+                                        nameLabel = "Owner Name",
+                                        pin = ownerPin,
+                                        onPinChange = { ownerPin = it.filter(Char::isDigit).take(6) },
+                                        confirmPin = ownerPinConfirm,
+                                        onConfirmPinChange = { ownerPinConfirm = it.filter(Char::isDigit).take(6) },
+                                        pinLabel = "Owner PIN",
+                                        confirmPinLabel = "Confirm Owner PIN",
+                                        pinVisible = ownerPinVisible,
+                                        onTogglePinVisibility = { ownerPinVisible = !ownerPinVisible },
+                                        confirmPinVisible = ownerPinConfirmVisible,
+                                        onToggleConfirmPinVisibility = {
+                                            ownerPinConfirmVisible = !ownerPinConfirmVisible
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    AccountRoleCard(
+                                        title = "Cashier / Staff",
+                                        subtitle = "Dipakai saat transaksi, cash session, dan audit kasir.",
+                                        name = cashierName,
+                                        onNameChange = { cashierName = it },
+                                        nameLabel = "Cashier / Staff Name",
+                                        pin = cashierPin,
+                                        onPinChange = { cashierPin = it.filter(Char::isDigit).take(6) },
+                                        confirmPin = cashierPinConfirm,
+                                        onConfirmPinChange = { cashierPinConfirm = it.filter(Char::isDigit).take(6) },
+                                        pinLabel = "Cashier / Staff PIN",
+                                        confirmPinLabel = "Confirm Cashier / Staff PIN",
+                                        pinVisible = cashierPinVisible,
+                                        onTogglePinVisibility = { cashierPinVisible = !cashierPinVisible },
+                                        confirmPinVisible = cashierPinConfirmVisible,
+                                        onToggleConfirmPinVisibility = {
+                                            cashierPinConfirmVisible = !cashierPinConfirmVisible
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                }
+                            } else {
                                 AccountRoleCard(
                                     title = "Owner",
                                     subtitle = "Untuk pengaturan penting dan kontrol perangkat.",
@@ -284,7 +327,6 @@ fun LocalFirstSetupScreen(
                                     onToggleConfirmPinVisibility = {
                                         ownerPinConfirmVisible = !ownerPinConfirmVisible
                                     },
-                                    modifier = Modifier.weight(1f),
                                 )
                                 AccountRoleCard(
                                     title = "Cashier / Staff",
@@ -304,64 +346,48 @@ fun LocalFirstSetupScreen(
                                     onToggleConfirmPinVisibility = {
                                         cashierPinConfirmVisible = !cashierPinConfirmVisible
                                     },
-                                    modifier = Modifier.weight(1f),
                                 )
                             }
-                        } else {
-                            AccountRoleCard(
-                                title = "Owner",
-                                subtitle = "Untuk pengaturan penting dan kontrol perangkat.",
-                                name = ownerName,
-                                onNameChange = { ownerName = it },
-                                nameLabel = "Owner Name",
-                                pin = ownerPin,
-                                onPinChange = { ownerPin = it.filter(Char::isDigit).take(6) },
-                                confirmPin = ownerPinConfirm,
-                                onConfirmPinChange = { ownerPinConfirm = it.filter(Char::isDigit).take(6) },
-                                pinLabel = "Owner PIN",
-                                confirmPinLabel = "Confirm Owner PIN",
-                                pinVisible = ownerPinVisible,
-                                onTogglePinVisibility = { ownerPinVisible = !ownerPinVisible },
-                                confirmPinVisible = ownerPinConfirmVisible,
-                                onToggleConfirmPinVisibility = {
-                                    ownerPinConfirmVisible = !ownerPinConfirmVisible
-                                },
+                            SetupSupportNote("PIN lokal dipakai untuk owner dan kasir di tablet ini. Gunakan 4 sampai 6 digit angka.")
+                        }
+                    }
+
+                    if (wide) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(Dimens.md),
+                        ) {
+                            SetupOpeningCashCard(
+                                openingCashText = openingCashText,
+                                onOpeningCashChange = { openingCashText = it.filter(Char::isDigit) },
+                                openCashSessionNow = openCashSessionNow,
+                                onOpenCashSessionChange = { openCashSessionNow = it },
+                                modifier = Modifier.weight(0.85f),
                             )
-                            AccountRoleCard(
-                                title = "Cashier / Staff",
-                                subtitle = "Dipakai saat transaksi, cash session, dan audit kasir.",
-                                name = cashierName,
-                                onNameChange = { cashierName = it },
-                                nameLabel = "Cashier / Staff Name",
-                                pin = cashierPin,
-                                onPinChange = { cashierPin = it.filter(Char::isDigit).take(6) },
-                                confirmPin = cashierPinConfirm,
-                                onConfirmPinChange = { cashierPinConfirm = it.filter(Char::isDigit).take(6) },
-                                pinLabel = "Cashier / Staff PIN",
-                                confirmPinLabel = "Confirm Cashier / Staff PIN",
-                                pinVisible = cashierPinVisible,
-                                onTogglePinVisibility = { cashierPinVisible = !cashierPinVisible },
-                                confirmPinVisible = cashierPinConfirmVisible,
-                                onToggleConfirmPinVisibility = {
-                                    cashierPinConfirmVisible = !cashierPinConfirmVisible
+                            SetupStarterCategoriesCard(
+                                starterCategoryDrafts = starterCategoryDrafts,
+                                onCategoryChange = { index, value ->
+                                    starterCategoryDrafts = starterCategoryDrafts.toMutableList().apply {
+                                        set(index, starterCategoryDrafts[index].copy(name = value))
+                                    }
                                 },
+                                onAddCategory = {
+                                    starterCategoryDrafts = starterCategoryDrafts + SetupCategoryDraft()
+                                },
+                                onRemoveCategory = { index ->
+                                    starterCategoryDrafts = starterCategoryDrafts.toMutableList().apply {
+                                        removeAt(index)
+                                    }
+                                },
+                                modifier = Modifier.weight(1.15f),
                             )
                         }
-                        SetupSupportNote("PIN lokal dipakai untuk owner dan kasir di tablet ini. Gunakan 4 sampai 6 digit angka.")
-                    }
-                }
-
-                if (wide) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(Dimens.md),
-                    ) {
+                    } else {
                         SetupOpeningCashCard(
                             openingCashText = openingCashText,
                             onOpeningCashChange = { openingCashText = it.filter(Char::isDigit) },
                             openCashSessionNow = openCashSessionNow,
                             onOpenCashSessionChange = { openCashSessionNow = it },
-                            modifier = Modifier.weight(0.85f),
                         )
                         SetupStarterCategoriesCard(
                             starterCategoryDrafts = starterCategoryDrafts,
@@ -378,55 +404,193 @@ fun LocalFirstSetupScreen(
                                     removeAt(index)
                                 }
                             },
-                            modifier = Modifier.weight(1.15f),
                         )
                     }
-                } else {
-                    SetupOpeningCashCard(
-                        openingCashText = openingCashText,
-                        onOpeningCashChange = { openingCashText = it.filter(Char::isDigit) },
-                        openCashSessionNow = openCashSessionNow,
-                        onOpenCashSessionChange = { openCashSessionNow = it },
+                }
+
+                if (wizardStep == SetupWizardStep.SERVER && connectToServer) {
+                    SetupServerConnectCard(
+                        serverBaseUrl = serverBaseUrl,
+                        onServerBaseUrlChange = { serverBaseUrl = it.trim() },
                     )
-                    SetupStarterCategoriesCard(
-                        starterCategoryDrafts = starterCategoryDrafts,
-                        onCategoryChange = { index, value ->
-                            starterCategoryDrafts = starterCategoryDrafts.toMutableList().apply {
-                                set(index, starterCategoryDrafts[index].copy(name = value))
+                }
+
+                if (wizardStep == SetupWizardStep.REVIEW) {
+                    AppCard {
+                        Column(verticalArrangement = Arrangement.spacedBy(Dimens.sm)) {
+                            AppSectionHeader(
+                                "Siap Dipakai",
+                                "Begitu disimpan, device ini langsung masuk ke mode kasir lokal.",
+                            )
+                            AppInfoLine(
+                                "Mode",
+                                if (connectToServer) "Local First + Connect Server" else "Local First",
+                            )
+                            AppInfoLine(
+                                "Server",
+                                if (connectToServer) {
+                                    serverBaseUrl.ifBlank { "Belum diisi, nanti atur dari Pengaturan" }
+                                } else {
+                                    "Tidak dipakai saat setup"
+                                },
+                            )
+                            AppInfoLine("Kategori starter", starterCategoryDrafts.count { it.name.isNotBlank() }.toString())
+                            if (!validationError.isNullOrBlank()) {
+                                Text(
+                                    text = validationError,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color(0xFFB42318),
+                                )
+                            } else {
+                                Text(
+                                    text = "Semua data valid. Tinggal simpan untuk mulai pakai app.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color(0xFF046C4E),
+                                )
                             }
-                        },
-                        onAddCategory = {
-                            starterCategoryDrafts = starterCategoryDrafts + SetupCategoryDraft()
-                        },
-                        onRemoveCategory = { index ->
-                            starterCategoryDrafts = starterCategoryDrafts.toMutableList().apply {
-                                removeAt(index)
+                            if (!message.isNullOrBlank()) {
+                                Text(
+                                    text = message.orEmpty(),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                             }
+                        }
+                    }
+
+                    Button(
+                        onClick = {
+                            if (saving) return@Button
+                            if (!validationError.isNullOrBlank()) {
+                                message = validationError
+                                return@Button
+                            }
+                            val finalStoreName = storeName.trim()
+                            val finalOutletId = settingsRepository.resolveOutletId(outletId)
+                            val finalOwnerName = ownerName.trim()
+                            val finalCashierName = cashierName.trim()
+                            val openingCash = openingCashText.toLongOrNull() ?: 0L
+                            val starterCategories = starterCategoryDrafts
+                                .map { it.name.trim() }
+                                .filter { it.isNotBlank() }
+                                .distinct()
+                            val finalCashierId = cashierId.ifBlank {
+                                settingsRepository.ensureDefaultCashierId(finalCashierName)
+                            }
+
+                            saving = true
+                            message = null
+                            runCatching {
+                                settingsRepository.saveReceiptConfig(
+                                    ReceiptConfig(
+                                        storeName = finalStoreName,
+                                        storeAddressOrPhone = storeAddress.trim(),
+                                        headerLogoPath = settingsRepository.getValue(SettingsRepository.KEY_STORE_LOGO),
+                                        watermarkLogoPath = settingsRepository.getValue(SettingsRepository.KEY_WATERMARK_LOGO),
+                                        footerText = settingsRepository.getValue(SettingsRepository.KEY_FOOTER_TEXT)
+                                            .ifBlank { "Thank you" },
+                                    ),
+                                )
+                                settingsRepository.upsert(SettingsRepository.KEY_OUTLET_ID, finalOutletId)
+                                settingsRepository.upsert(SettingsRepository.KEY_OWNER_NAME, finalOwnerName)
+                                settingsRepository.upsert(SettingsRepository.KEY_OWNER_PIN, ownerPin)
+                                settingsRepository.upsert(SettingsRepository.KEY_DEFAULT_CASHIER_ID, finalCashierId)
+                                settingsRepository.upsert(SettingsRepository.KEY_DEFAULT_CASHIER_NAME, finalCashierName)
+                                settingsRepository.upsert(SettingsRepository.KEY_DEFAULT_CASHIER_PIN, cashierPin)
+                                settingsRepository.upsert(SettingsRepository.KEY_AUTO_TAX_PERCENT, autoTaxPercent.ifBlank { "11" })
+                                settingsRepository.upsert(SettingsRepository.KEY_AUTO_SERVICE_PERCENT, autoServicePercent.ifBlank { "10" })
+                                settingsRepository.upsert(SettingsRepository.KEY_AUTO_ROUNDING, autoRounding.ifBlank { "0" })
+                                settingsRepository.upsert(
+                                    SettingsRepository.KEY_SETUP_MODE,
+                                    SettingsRepository.SETUP_MODE_LOCAL_FIRST,
+                                )
+                                settingsRepository.upsert(
+                                    SettingsRepository.KEY_SERVER_BASE_URL,
+                                    if (connectToServer) serverBaseUrl.trim() else "",
+                                )
+
+                                if (starterCategories.isNotEmpty() && menuRepository.getGroups(finalOutletId).isEmpty()) {
+                                    starterGroups(finalOutletId, starterCategories).forEach {
+                                        menuRepository.upsertGroup(it, finalOutletId)
+                                    }
+                                }
+
+                                if (openCashSessionNow && cashSessionRepository.getActiveSession(finalOutletId) == null) {
+                                    cashSessionRepository.openSession(
+                                        outletId = finalOutletId,
+                                        openingCash = openingCash,
+                                        userId = finalCashierName,
+                                        openedAt = nowIso(),
+                                    )
+                                }
+
+                                settingsRepository.markLocalSetupCompleted(true)
+                            }.onFailure {
+                                message = "Setup failed: ${it.message ?: "Unknown error"}"
+                            }.onSuccess {
+                                message = "Tablet siap dipakai."
+                                onComplete()
+                            }
+                            saving = false
                         },
-                    )
+                        enabled = !saving && validationError == null,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(if (saving) "Saving..." else "Save and Start Using App")
+                    }
                 }
 
                 AppCard {
                     Column(verticalArrangement = Arrangement.spacedBy(Dimens.sm)) {
-                        AppSectionHeader(
-                            "Siap Dipakai",
-                            "Begitu disimpan, device ini langsung masuk ke mode kasir lokal.",
-                        )
-                        AppInfoLine("Mode", "Local First")
-                        AppInfoLine("Server", "Bisa dipasang nanti dari Pengaturan")
-                        AppInfoLine("Kategori starter", starterCategoryDrafts.count { it.name.isNotBlank() }.toString())
-                        if (!validationError.isNullOrBlank()) {
-                            Text(
-                                text = validationError,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Color(0xFFB42318),
-                            )
-                        } else {
-                            Text(
-                                text = "Semua data valid. Tinggal simpan untuk mulai pakai app.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Color(0xFF046C4E),
-                            )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(Dimens.sm),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            if (wizardStep != SetupWizardStep.PATH) {
+                                TextButton(
+                                    onClick = {
+                                        wizardStep = when (wizardStep) {
+                                            SetupWizardStep.DETAILS -> SetupWizardStep.PATH
+                                            SetupWizardStep.SERVER -> SetupWizardStep.DETAILS
+                                            SetupWizardStep.REVIEW -> if (connectToServer) SetupWizardStep.SERVER else SetupWizardStep.DETAILS
+                                            SetupWizardStep.PATH -> SetupWizardStep.PATH
+                                        }
+                                    },
+                                ) {
+                                    Text("Back")
+                                }
+                            }
+                            Button(
+                                onClick = {
+                                    wizardStep = when (wizardStep) {
+                                        SetupWizardStep.PATH -> SetupWizardStep.DETAILS
+                                        SetupWizardStep.DETAILS -> {
+                                            if (!canContinueFromDetails) {
+                                                message = validationError
+                                                SetupWizardStep.DETAILS
+                                            } else if (connectToServer) {
+                                                SetupWizardStep.SERVER
+                                            } else {
+                                                SetupWizardStep.REVIEW
+                                            }
+                                        }
+                                        SetupWizardStep.SERVER -> SetupWizardStep.REVIEW
+                                        SetupWizardStep.REVIEW -> SetupWizardStep.REVIEW
+                                    }
+                                },
+                                enabled = wizardStep != SetupWizardStep.REVIEW,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text(
+                                    when (wizardStep) {
+                                        SetupWizardStep.PATH -> "Continue"
+                                        SetupWizardStep.DETAILS -> if (connectToServer) "Continue to Server" else "Continue to Review"
+                                        SetupWizardStep.SERVER -> "Continue to Review"
+                                        SetupWizardStep.REVIEW -> "Ready to Save"
+                                    }
+                                )
+                            }
                         }
                         if (!message.isNullOrBlank()) {
                             Text(
@@ -436,80 +600,6 @@ fun LocalFirstSetupScreen(
                             )
                         }
                     }
-                }
-
-                Button(
-                    onClick = {
-                        if (saving) return@Button
-                        if (!validationError.isNullOrBlank()) {
-                            message = validationError
-                            return@Button
-                        }
-                        val finalStoreName = storeName.trim()
-                        val finalOutletId = outletId.trim().ifBlank { SettingsRepository.DEFAULT_OUTLET_ID }
-                        val finalOwnerName = ownerName.trim()
-                        val finalCashierName = cashierName.trim()
-                        val openingCash = openingCashText.toLongOrNull() ?: 0L
-                        val starterCategories = starterCategoryDrafts
-                            .map { it.name.trim() }
-                            .filter { it.isNotBlank() }
-                            .distinct()
-                        val finalCashierId = cashierId.ifBlank {
-                            settingsRepository.ensureDefaultCashierId(finalCashierName)
-                        }
-
-                        saving = true
-                        message = null
-                        runCatching {
-                            settingsRepository.saveReceiptConfig(
-                                ReceiptConfig(
-                                    storeName = finalStoreName,
-                                    storeAddressOrPhone = storeAddress.trim(),
-                                    headerLogoPath = settingsRepository.getValue(SettingsRepository.KEY_STORE_LOGO),
-                                    watermarkLogoPath = settingsRepository.getValue(SettingsRepository.KEY_WATERMARK_LOGO),
-                                    footerText = settingsRepository.getValue(SettingsRepository.KEY_FOOTER_TEXT)
-                                        .ifBlank { "Thank you" },
-                                ),
-                            )
-                            settingsRepository.upsert(SettingsRepository.KEY_OUTLET_ID, finalOutletId)
-                            settingsRepository.upsert(SettingsRepository.KEY_OWNER_NAME, finalOwnerName)
-                            settingsRepository.upsert(SettingsRepository.KEY_OWNER_PIN, ownerPin)
-                            settingsRepository.upsert(SettingsRepository.KEY_DEFAULT_CASHIER_ID, finalCashierId)
-                            settingsRepository.upsert(SettingsRepository.KEY_DEFAULT_CASHIER_NAME, finalCashierName)
-                            settingsRepository.upsert(SettingsRepository.KEY_DEFAULT_CASHIER_PIN, cashierPin)
-                            settingsRepository.upsert(SettingsRepository.KEY_AUTO_TAX_PERCENT, autoTaxPercent.ifBlank { "11" })
-                            settingsRepository.upsert(SettingsRepository.KEY_AUTO_SERVICE_PERCENT, autoServicePercent.ifBlank { "10" })
-                            settingsRepository.upsert(SettingsRepository.KEY_AUTO_ROUNDING, autoRounding.ifBlank { "0" })
-                            settingsRepository.upsert(SettingsRepository.KEY_SETUP_MODE, SettingsRepository.SETUP_MODE_LOCAL_FIRST)
-
-                            if (starterCategories.isNotEmpty() && menuRepository.getGroups(finalOutletId).isEmpty()) {
-                                starterGroups(finalOutletId, starterCategories).forEach {
-                                    menuRepository.upsertGroup(it, finalOutletId)
-                                }
-                            }
-
-                            if (openCashSessionNow && cashSessionRepository.getActiveSession(finalOutletId) == null) {
-                                cashSessionRepository.openSession(
-                                    outletId = finalOutletId,
-                                    openingCash = openingCash,
-                                    userId = finalCashierName,
-                                    openedAt = nowIso(),
-                                )
-                            }
-
-                            settingsRepository.markLocalSetupCompleted(true)
-                        }.onFailure {
-                            message = "Setup failed: ${it.message ?: "Unknown error"}"
-                        }.onSuccess {
-                            message = "Tablet siap dipakai."
-                            onComplete()
-                        }
-                        saving = false
-                    },
-                    enabled = !saving && validationError == null,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(if (saving) "Saving..." else "Save and Start Using App")
                 }
             }
         }
@@ -684,6 +774,81 @@ private fun SetupStarterCategoriesCard(
                 Text("+ Tambah Kategori")
             }
             SetupSupportNote("Kosongkan kalau mau mulai tanpa kategori bawaan.")
+        }
+    }
+}
+
+@Composable
+private fun SetupPathChoiceCard(
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val borderColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+    SetupInsetCard(modifier = modifier) {
+        Column(verticalArrangement = Arrangement.spacedBy(Dimens.xs)) {
+            AppStatusPill(
+                label = if (selected) "Selected" else "Tap to Choose",
+                containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                contentColor = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = Color.Transparent,
+                border = BorderStroke(1.dp, borderColor),
+                shape = MaterialTheme.shapes.medium,
+            ) {
+                TextButton(
+                    onClick = onSelect,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (selected) "Selected" else "Use This Path")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SetupServerConnectCard(
+    serverBaseUrl: String,
+    onServerBaseUrlChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    AppCard(modifier = modifier) {
+        Column(verticalArrangement = Arrangement.spacedBy(Dimens.sm)) {
+            AppSectionHeader(
+                title = "Connect to Server",
+                subtitle = "Opsional saat setup. Kalau kosong, tetap Local First.",
+            )
+            OutlinedTextField(
+                value = serverBaseUrl,
+                onValueChange = onServerBaseUrlChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Server Base URL") },
+                placeholder = { Text("http://10.0.2.2:8080") },
+                singleLine = true,
+            )
+            SetupQuickInfo(
+                title = "Setelah setup",
+                lines = listOf(
+                    "Login owner di mobile",
+                    "Masukkan pairing code dari Server Admin",
+                    "Session server aktif lalu sync bisa jalan",
+                ),
+            )
         }
     }
 }

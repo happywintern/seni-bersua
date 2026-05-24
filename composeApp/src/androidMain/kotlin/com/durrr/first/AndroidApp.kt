@@ -14,6 +14,7 @@ import com.durrr.first.data.repo.OrderSyncRepository
 import com.durrr.first.data.repo.RecapRepository
 import com.durrr.first.data.repo.RecapSyncRepository
 import com.durrr.first.data.repo.ReceiptRepository
+import com.durrr.first.data.repo.ServerAuthRepository
 import com.durrr.first.data.repo.SettingsRepository
 import com.durrr.first.data.repo.StockRepository
 import com.durrr.first.data.repo.CashSessionRepository
@@ -32,6 +33,8 @@ fun rememberAppDependencies(
     launchScanner: () -> Unit,
     pickImage: ((String?) -> Unit) -> Unit = { onPicked -> onPicked(null) },
     pickDate: (initialIso: String?, onPicked: (String) -> Unit) -> Unit = { _, _ -> },
+    shareText: (subject: String, payload: String) -> Unit = { _, _ -> },
+    printHtml: (jobName: String, htmlPayload: String) -> Unit = { _, _ -> },
 ): AppDependencies {
     val db = remember {
         AndroidPlatformContextHolder.context = context.applicationContext
@@ -43,12 +46,13 @@ fun rememberAppDependencies(
     val menuRepository = remember { MenuRepository(db) }
     val transaksiRepository = remember { TransaksiRepository(db) }
     val recapRepository = remember { RecapRepository(db) }
-    val recapSyncRepository = remember { RecapSyncRepository(recapRepository, apiClient) }
     val cashFlowRepository = remember { CashFlowRepository(db) }
     val stockRepository = remember { StockRepository(db) }
     val cashSessionRepository = remember { CashSessionRepository(db) }
     val receiptRepository = remember { ReceiptRepository(db) }
     val settingsRepository = remember { SettingsRepository(db) }
+    val serverAuthRepository = remember { ServerAuthRepository(apiClient, settingsRepository) }
+    val recapSyncRepository = remember { RecapSyncRepository(recapRepository, apiClient, settingsRepository) }
     val orderRepository = remember { OrderCacheRepository(db) }
     val syncRepository = remember { SyncRepository(db) }
     val isoFormatter = remember { SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US) }
@@ -91,6 +95,7 @@ fun rememberAppDependencies(
         stockRepository = stockRepository,
         cashSessionRepository = cashSessionRepository,
         receiptRepository = receiptRepository,
+        serverAuthRepository = serverAuthRepository,
         settingsRepository = settingsRepository,
         orderCacheRepository = orderRepository,
         orderSyncRepository = orderSyncRepository,
@@ -101,5 +106,7 @@ fun rememberAppDependencies(
         launchScanner = launchScanner,
         pickImage = pickImage,
         pickDate = pickDate,
+        shareText = shareText,
+        printHtml = printHtml,
     )
 }

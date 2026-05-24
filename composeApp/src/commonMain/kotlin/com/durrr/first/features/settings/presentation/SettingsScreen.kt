@@ -29,6 +29,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.durrr.first.data.repo.MenuSyncRepository
 import com.durrr.first.data.repo.OrderSyncRepository
+import com.durrr.first.data.repo.ServerAuthRepository
 import com.durrr.first.data.repo.SettingsRepository
 import com.durrr.first.data.repo.TransaksiSyncRepository
 import com.durrr.first.domain.model.ReceiptConfig
@@ -47,6 +48,7 @@ fun SettingsScreen(
     menuSyncRepository: MenuSyncRepository? = null,
     orderSyncRepository: OrderSyncRepository? = null,
     transaksiSyncRepository: TransaksiSyncRepository? = null,
+    serverAuthRepository: ServerAuthRepository? = null,
     isOwnerSession: Boolean = false,
     onNotify: (title: String, message: String, level: AppNotificationLevel) -> Unit = { _, _, _ -> },
     onRequireLocalSetup: () -> Unit = {},
@@ -61,8 +63,7 @@ fun SettingsScreen(
     var watermarkLogoPath by remember { mutableStateOf("") }
     var footerText by remember { mutableStateOf("") }
     var serverBaseUrl by remember { mutableStateOf("") }
-    var outletId by remember { mutableStateOf("") }
-    var serverApiSharedSecret by remember { mutableStateOf("") }
+    var pairingCode by remember { mutableStateOf("") }
     var autoTaxPercent by remember { mutableStateOf("11") }
     var autoServicePercent by remember { mutableStateOf("10") }
     var autoRounding by remember { mutableStateOf("0") }
@@ -80,8 +81,6 @@ fun SettingsScreen(
         watermarkLogoPath = config.watermarkLogoPath
         footerText = config.footerText
         serverBaseUrl = settingsRepository.getValue(SettingsRepository.KEY_SERVER_BASE_URL)
-        outletId = settingsRepository.getValue(SettingsRepository.KEY_OUTLET_ID)
-        serverApiSharedSecret = settingsRepository.getValue(SettingsRepository.KEY_SERVER_API_SHARED_SECRET)
         autoTaxPercent = settingsRepository
             .getValue(SettingsRepository.KEY_AUTO_TAX_PERCENT)
             .ifBlank { "11" }
@@ -121,11 +120,10 @@ fun SettingsScreen(
         ) {
         fun currentBaseUrlOrNull(): String? = serverBaseUrl.trim().ifBlank { null }
         fun requireBaseUrl(): String = currentBaseUrlOrNull() ?: error("Set Server Base URL first in Settings.")
-        fun currentOutletId(): String = outletId.trim().ifBlank { SettingsRepository.DEFAULT_OUTLET_ID }
+        fun currentOutletId(): String = settingsRepository.resolveOutletId()
         val hasServerConfigured = currentBaseUrlOrNull() != null
         val activeSession = settingsRepository.getActiveUserSession()
         val ownerAccess = isOwnerSession || activeSession?.role == SettingsRepository.ROLE_OWNER
-
         fun requireOwnerAccessOrFail() {
             if (!ownerAccess) {
                 error("Aksi ini khusus Owner.")
@@ -253,19 +251,6 @@ fun SettingsScreen(
                     placeholder = { Text("http://10.0.2.2:8080") },
                 )
                 OutlinedTextField(
-                    value = outletId,
-                    onValueChange = { outletId = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Outlet ID (Optional)") },
-                )
-                OutlinedTextField(
-                    value = serverApiSharedSecret,
-                    onValueChange = { serverApiSharedSecret = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Server API Shared Secret") },
-                    placeholder = { Text("Same as SUCASH_API_SHARED_SECRET on server") },
-                )
-                OutlinedTextField(
                     value = autoTaxPercent,
                     onValueChange = { autoTaxPercent = it.filter(Char::isDigit) },
                     modifier = Modifier.fillMaxWidth(),
@@ -289,24 +274,18 @@ fun SettingsScreen(
                 Button(
                     onClick = {
                         if (!ownerAccess) {
-                            savedMessage = "Hanya Owner yang boleh ubah koneksi server/outlet."
+                            savedMessage = "Hanya Owner yang boleh ubah koneksi server."
                             return@Button
                         }
+                        val previousBaseUrl = settingsRepository.getOptionalServerBaseUrl().orEmpty()
+                        val nextBaseUrl = serverBaseUrl.trim()
                         val baseUrlSaved = settingsRepository.upsert(
                             SettingsRepository.KEY_SERVER_BASE_URL,
-                            serverBaseUrl.trim(),
-                        )
-                        val outletSaved = settingsRepository.upsert(
-                            SettingsRepository.KEY_OUTLET_ID,
-                            outletId.trim(),
+                            nextBaseUrl,
                         )
                         val taxSaved = settingsRepository.upsert(
                             SettingsRepository.KEY_AUTO_TAX_PERCENT,
                             autoTaxPercent.ifBlank { "11" },
-                        )
-                        val sharedSecretSaved = settingsRepository.upsert(
-                            SettingsRepository.KEY_SERVER_API_SHARED_SECRET,
-                            serverApiSharedSecret.trim(),
                         )
                         val serviceSaved = settingsRepository.upsert(
                             SettingsRepository.KEY_AUTO_SERVICE_PERCENT,
@@ -316,11 +295,12 @@ fun SettingsScreen(
                             SettingsRepository.KEY_AUTO_ROUNDING,
                             autoRounding.ifBlank { "0" },
                         )
+                        if (previousBaseUrl != nextBaseUrl) {
+                            settingsRepository.clearServerAuthSession()
+                        }
                         savedMessage = if (
                             baseUrlSaved &&
-                            outletSaved &&
                             taxSaved &&
-                            sharedSecretSaved &&
                             serviceSaved &&
                             roundingSaved
                         ) {
@@ -334,8 +314,50 @@ fun SettingsScreen(
                 ) {
                     Text("Save Connectivity Settings")
                 }
+                if (serverAuthRepository != null) {
+                    OutlinedTextField(
+                        value = pairingCode,
+                        onValueChange = { pairingCode = it.uppercase().take(16) },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Pairing Code (From Server Admin)") },
+                        placeholder = { Text("Masukkan pairing code dari panel server") },
+                    )
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                runSyncAction("pair_session") {
+                                    val baseUrl = requireBaseUrl()
+                                    val active = settingsRepository.getActiveUserSession()
+                                        ?: error("Login dulu sebelum pairing server.")
+                                    val existingBearer = settingsRepository
+                                        .getActiveUserServerApiBearerToken(currentOutletId())
+                                        ?.trim()
+                                        .orEmpty()
+                                    if (pairingCode.isBlank() && existingBearer.isBlank()) {
+                                        error("Pairing code dari server admin wajib untuk aktivasi session pertama.")
+                                    }
+                                    val session = serverAuthRepository.bootstrapSessionForActiveUser(
+                                        baseUrl = baseUrl,
+                                        outletId = currentOutletId(),
+                                        pairingCode = pairingCode.trim().ifBlank { null },
+                                    ) ?: error("Gagal membuat session server.")
+                                    pairingCode = ""
+                                    "Server session aktif: ${session.role} • ${session.outletId}"
+                                }
+                            }
+                        },
+                        enabled = !syncBusy && hasServerConfigured,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        ActionButtonLabel(
+                            label = "Pair Active User to Server",
+                            loadingLabel = "Pairing...",
+                            loading = syncBusyAction == "pair_session",
+                        )
+                    }
+                }
                 Text(
-                    text = "Leave base URL blank for local-only mode. For protected API writes, set one shared secret. Bearer token is derived from active role + PIN.",
+                    text = "Leave base URL blank for local-only mode. Pairing code dibuat dari server admin, mobile hanya redeem.",
                     style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
                 )
             }
@@ -620,7 +642,6 @@ fun SettingsScreenPreview() {
     var storeName by remember { mutableStateOf("SuCash") }
     var storeAddress by remember { mutableStateOf("Jl. Preview No. 12") }
     var serverBaseUrl by remember { mutableStateOf("http://10.0.2.2:8080") }
-    var outletId by remember { mutableStateOf("default") }
 
     AppTheme {
         Column(
@@ -656,12 +677,6 @@ fun SettingsScreenPreview() {
                         onValueChange = { serverBaseUrl = it },
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text("Server Base URL") },
-                    )
-                    OutlinedTextField(
-                        value = outletId,
-                        onValueChange = { outletId = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Outlet ID (Optional)") },
                     )
                     Button(onClick = {}, modifier = Modifier.fillMaxWidth()) {
                         Text("Save Server Settings")

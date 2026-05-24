@@ -363,7 +363,7 @@ fun AndroidAppScaffold(
                                 viewModel.pushNotification(title, message, level)
                             },
                             onOpenCashFlow = { navController.navigate(CASHFLOW_ROUTE) },
-                            onOpenStock = { navController.navigate(STOCK_ROUTE) },
+//                            onOpenStock = { navController.navigate(STOCK_ROUTE) },
                             onOpenCashClosing = { navController.navigate(CASH_CLOSING_ROUTE) },
                             onOpenTransactionHistory = { navController.navigate(TRANSACTION_HISTORY_ROUTE) },
                         )
@@ -375,6 +375,7 @@ fun AndroidAppScaffold(
                             menuSyncRepository = dependencies.menuSyncRepository,
                             orderSyncRepository = dependencies.orderSyncRepository,
                             transaksiSyncRepository = dependencies.transaksiSyncRepository,
+                            serverAuthRepository = dependencies.serverAuthRepository,
                             isOwnerSession = isOwner,
                             onNotify = { title, message, level ->
                                 viewModel.pushNotification(title, message, level)
@@ -382,7 +383,7 @@ fun AndroidAppScaffold(
                             onRequireLocalSetup = onRequireLocalSetup,
                             onLogout = onLogout,
                             onOpenCashFlow = { navController.navigate(CASHFLOW_ROUTE) },
-                            onOpenStock = { navController.navigate(STOCK_ROUTE) },
+                            // onOpenStock = { navController.navigate(STOCK_ROUTE) },
                             onOpenCashClosing = { navController.navigate(CASH_CLOSING_ROUTE) },
                         )
                     }
@@ -430,6 +431,8 @@ fun AndroidAppScaffold(
                             receiptRepository = dependencies.receiptRepository,
                             settingsRepository = dependencies.settingsRepository,
                             onBack = { navController.popBackStack() },
+                            onShareReceipt = dependencies.shareText,
+                            onPrintReceipt = dependencies.printHtml,
                         )
                     }
                     composable(RECOMMENDATION_ROUTE) {
@@ -439,6 +442,7 @@ fun AndroidAppScaffold(
                                 settingsRepository = dependencies.settingsRepository,
                                 menuSyncRepository = dependencies.menuSyncRepository,
                                 pickDate = dependencies.pickDate,
+                                pickImage = dependencies.pickImage,
                             )
                         } else {
                             AccessDeniedScreen(
@@ -651,7 +655,7 @@ private fun NotificationItem(notification: AppNotification) {
 
 private fun notificationTimeLabel(millis: Long): String {
     return runCatching {
-        val formatter = SimpleDateFormat("HH:mm", Locale.US)
+        val formatter = SimpleDateFormat("dd-MM-yy HH:mm", Locale.US)
         formatter.format(Date(millis))
     }.getOrElse { "-" }
 }

@@ -61,6 +61,7 @@ fun AppContent(dependencies: AppDependencies) {
             menuSyncRepository = dependencies.menuSyncRepository,
             orderSyncRepository = dependencies.orderSyncRepository,
             transaksiSyncRepository = dependencies.transaksiSyncRepository,
+            serverAuthRepository = dependencies.serverAuthRepository,
         )
     }
 }

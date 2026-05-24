@@ -12,7 +12,7 @@ class MenuRepository(private val db: TokoDatabase) {
         return db.tokoQueries.selectAllGroups(outletId).executeAsList().map {
             GroupItem(
                 id = it.id_group_item,
-                name = it.nama,
+                name = CatalogNameRules.normalizeOrFallback(it.nama, fallback = "Kategori"),
                 order = it.urutan.toInt(),
                 outletId = it.outlet_id,
             )
@@ -23,7 +23,8 @@ class MenuRepository(private val db: TokoDatabase) {
         group: GroupItem,
         outletId: String = group.outletId ?: SettingsRepository.DEFAULT_OUTLET_ID,
     ) {
-        db.tokoQueries.upsertGroupItem(group.id, group.name, group.order.toLong(), outletId)
+        val normalizedName = CatalogNameRules.normalizeOrFallback(group.name, fallback = "Kategori")
+        db.tokoQueries.upsertGroupItem(group.id, normalizedName, group.order.toLong(), outletId)
     }
 
     fun deleteGroup(groupId: String, outletId: String = SettingsRepository.DEFAULT_OUTLET_ID) {
@@ -34,7 +35,7 @@ class MenuRepository(private val db: TokoDatabase) {
         return db.tokoQueries.selectAllModifierGroups(outletId).executeAsList().map {
             ModifierGroup(
                 id = it.id_modifier_group,
-                name = it.nama,
+                name = CatalogNameRules.normalizeOrFallback(it.nama, fallback = "Modifier"),
                 selectionType = it.selection_type,
                 isRequired = it.is_required.toLong() == 1L,
                 maxSelection = it.max_selection.toInt(),
@@ -51,7 +52,7 @@ class MenuRepository(private val db: TokoDatabase) {
             ModifierOption(
                 id = it.id_modifier_option,
                 groupId = it.id_modifier_group,
-                name = it.nama,
+                name = CatalogNameRules.normalizeOrFallback(it.nama, fallback = "Option"),
                 priceDelta = it.price_delta.toLong(),
                 order = it.urutan.toInt(),
                 isDefault = it.is_default.toLong() == 1L,
@@ -74,20 +75,21 @@ class MenuRepository(private val db: TokoDatabase) {
         options: List<ModifierOption>,
         outletId: String = group.outletId ?: SettingsRepository.DEFAULT_OUTLET_ID,
     ) {
+        val normalizedGroupName = CatalogNameRules.normalizeOrFallback(group.name, fallback = "Modifier")
         db.tokoQueries.upsertModifierGroup(
             group.id,
-            group.name,
+            normalizedGroupName,
             group.selectionType,
             if (group.isRequired) 1L else 0L,
             group.maxSelection.toLong(),
             outletId,
         )
         db.tokoQueries.deleteModifierOptionsByGroup(group.id, outletId)
-        options.forEach { option ->
+        options.forEachIndexed { index, option ->
             db.tokoQueries.insertModifierOption(
                 option.id,
                 group.id,
-                option.name,
+                CatalogNameRules.normalizeOrFallback(option.name, fallback = "Option ${index + 1}"),
                 option.priceDelta,
                 option.order.toLong(),
                 if (option.isDefault) 1L else 0L,
@@ -124,7 +126,7 @@ class MenuRepository(private val db: TokoDatabase) {
         return db.tokoQueries.selectAllItems(outletId).executeAsList().map {
             Item(
                 id = it.id_item,
-                name = it.nama ?: "",
+                name = CatalogNameRules.normalizeOrFallback(it.nama, fallback = "Item"),
                 price = parseLong(it.harga),
                 groupId = it.id_group_item,
                 code = it.kode,
@@ -139,9 +141,10 @@ class MenuRepository(private val db: TokoDatabase) {
         item: Item,
         outletId: String = item.outletId ?: SettingsRepository.DEFAULT_OUTLET_ID,
     ) {
+        val normalizedName = CatalogNameRules.normalizeOrFallback(item.name, fallback = "Item")
         db.tokoQueries.upsertItem(
             id_item = item.id,
-            nama = item.name,
+            nama = normalizedName,
             harga = item.price.toString(),
             id_group_item = item.groupId,
             is_delete = if (item.isActive) "0" else "1",

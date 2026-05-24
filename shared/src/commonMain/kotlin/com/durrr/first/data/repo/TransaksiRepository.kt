@@ -255,13 +255,14 @@ class TransaksiRepository(
         cashierName: String? = null,
         allowNegativeStock: Boolean = true,
     ): TotalsCalculator.Result {
+        val safePaidAmount = pembayaran.amountPaid.coerceAtLeast(0L)
         val totals = totalsCalculator.calculate(
             lines = details.map { TotalsCalculator.Line(it.qty, it.price, it.discount) },
             discountPlus = discountPlus,
             tax = tax,
             serviceCharge = serviceCharge,
             rounding = rounding,
-            paid = pembayaran.amountPaid,
+            paid = safePaidAmount,
         )
 
         db.transaction {
@@ -271,14 +272,14 @@ class TransaksiRepository(
                 pajak = tax.toString(),
                 service_charge = serviceCharge.toString(),
                 round_harga = rounding.toString(),
-                dibayar = pembayaran.amountPaid.toString(),
+                dibayar = safePaidAmount.toString(),
                 id_transaksi = transaksiId,
             )
 
             db.tokoQueries.insertPembayaran(
                 id_pembayaran = pembayaran.id,
                 id_transaksi = transaksiId,
-                dibayar = pembayaran.amountPaid.toString(),
+                dibayar = safePaidAmount.toString(),
                 kembalian = totals.change.toString(),
                 id_jenis_bayar = pembayaran.paymentTypeId,
                 outlet_id = outletId,

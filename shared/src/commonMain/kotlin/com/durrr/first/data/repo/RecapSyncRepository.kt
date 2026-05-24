@@ -19,6 +19,7 @@ import kotlinx.coroutines.delay
 class RecapSyncRepository(
     private val recapRepository: RecapRepository,
     private val apiClient: ServerApiClient,
+    private val settingsRepository: SettingsRepository? = null,
 ) {
     data class DashboardLoadResult(
         val dashboard: RecapDashboard,
@@ -45,6 +46,10 @@ class RecapSyncRepository(
         anchorDate: String,
         outletId: String = SettingsRepository.DEFAULT_OUTLET_ID,
     ): RecapDashboard {
+        val bearerToken = resolveBearerTokenOrNull(
+            outletId = outletId,
+            requireActiveSession = true,
+        )
         val local = runCatching {
             recapRepository.getRecap(range, anchorDate, outletId)
         }.getOrElse { cause ->
@@ -52,7 +57,13 @@ class RecapSyncRepository(
         }
         val remote = runCatching {
             withNetworkRetry {
-                apiClient.getRecapSummary(baseUrl, range, anchorDate, outletId)
+                apiClient.getRecapSummary(
+                    baseUrl = baseUrl,
+                    range = range,
+                    date = anchorDate,
+                    outletId = outletId,
+                    bearerToken = bearerToken,
+                )
             }
         }.getOrElse { cause ->
             throw toRecapSyncException(cause, source = "Server recap sync")
@@ -71,6 +82,10 @@ class RecapSyncRepository(
         anchorDate: String,
         outletId: String = SettingsRepository.DEFAULT_OUTLET_ID,
     ): DashboardLoadResult {
+        val bearerToken = resolveBearerTokenOrNull(
+            outletId = outletId,
+            requireActiveSession = false,
+        )
         val local = runCatching {
             recapRepository.getRecap(range, anchorDate, outletId)
         }.getOrElse { cause ->
@@ -79,7 +94,13 @@ class RecapSyncRepository(
 
         val remoteResult = runCatching {
             withNetworkRetry {
-                apiClient.getRecapSummary(baseUrl, range, anchorDate, outletId)
+                apiClient.getRecapSummary(
+                    baseUrl = baseUrl,
+                    range = range,
+                    date = anchorDate,
+                    outletId = outletId,
+                    bearerToken = bearerToken,
+                )
             }
         }
         val remote = remoteResult.getOrNull()
@@ -259,5 +280,18 @@ class RecapSyncRepository(
             message = "$reason: $detail",
             cause = cause,
         )
+    }
+
+    private fun resolveBearerTokenOrNull(
+        outletId: String,
+        requireActiveSession: Boolean,
+    ): String? {
+        val token = settingsRepository?.getActiveUserServerApiBearerToken(outletId)
+            ?.trim()
+            .orEmpty()
+        if (settingsRepository != null && requireActiveSession && token.isBlank()) {
+            error("Session server belum aktif. Pairing server dulu lalu login ulang.")
+        }
+        return token.ifBlank { null }
     }
 }
