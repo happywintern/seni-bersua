@@ -6,6 +6,7 @@ import MenuPage from "./MenuPage";
 import AboutPage from "./AboutPage";
 import ReservationPage from "./ReservationPage";
 import ContactPage from "./ContactPage";
+import EventPage from "./EventPage";
 
 const menuItems = [
   {
@@ -101,6 +102,7 @@ function App() {
   const isAboutPage = window.location.pathname === "/web/about";
   const isReservationPage = window.location.pathname === "/web/reservasi";
   const isContactPage = window.location.pathname === "/web/kontak";
+  const isEventPage = window.location.pathname === "/web/event";
 
   function scrollCarousel(direction) {
     const element = menuCarouselRef.current;
@@ -116,7 +118,7 @@ function App() {
   }
 
   function navigateToSection(sectionId) {
-    if (isMenuPage || isAboutPage || isReservationPage || isContactPage) {
+    if (isMenuPage || isAboutPage || isReservationPage || isContactPage || isEventPage) {
       window.location.href = `/#${sectionId}`;
       return;
     }
@@ -139,6 +141,10 @@ function App() {
     window.location.href = "/web/kontak";
   }
 
+  function navigateToEventPage() {
+    window.location.href = "/web/event";
+  }
+
   return (
     <div className="page-shell">
       <nav className="topbar">
@@ -152,7 +158,7 @@ function App() {
           <button type="button" onClick={navigateToMenuPage}>Menu</button>
           <button type="button" onClick={navigateToAboutPage}>Tentang Kami</button>
           <button type="button" onClick={navigateToReservationPage}>Reservasi</button>
-          <button type="button" onClick={() => navigateToSection("event")}>Event</button>
+          <button type="button" onClick={navigateToEventPage}>Event</button>
           <button type="button" onClick={navigateToContactPage}>Kontak Kami</button>
         </div>
       </nav>
@@ -164,6 +170,8 @@ function App() {
           <AboutPage />
         ) : isReservationPage ? (
           <ReservationPage />
+        ) : isEventPage ? (
+          <EventPage />
         ) : isContactPage ? (
           <ContactPage />
         ) : (
@@ -302,7 +310,7 @@ function App() {
           <div className="footer-section">
             <div className="footer-title">Informasi</div>
             <a href="/web/about">Tentang Kami</a>
-            <a href="/event">Event</a>
+            <a href="/web/event">Event</a>
             <a href="/web/kontak">Kontak Kami</a>
           </div>
 

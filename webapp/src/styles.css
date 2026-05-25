@@ -1003,6 +1003,109 @@ main {
   font-size: 0.94rem;
   line-height: 1.7;
 }
+
+.event-page {
+  min-height: calc(100vh - 76px);
+  padding: 82px 60px;
+  background: var(--page-bg);
+}
+
+.event-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  gap: 34px;
+  align-items: center;
+  max-width: 1120px;
+  margin: 0 auto 48px;
+}
+
+.event-hero-image {
+  overflow: hidden;
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+}
+
+.event-hero-image img {
+  width: 100%;
+  height: 420px;
+  object-fit: cover;
+}
+
+.event-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 28px;
+}
+
+.event-meta-card {
+  padding: 16px;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 12px 28px rgba(13, 26, 46, 0.1);
+}
+
+.event-meta-title {
+  margin-bottom: 6px;
+  color: var(--blue-800);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.event-meta-value {
+  color: var(--text);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.event-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.event-card {
+  padding: 22px;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.event-card-date {
+  color: var(--blue-800);
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.event-card-title {
+  font-size: 1.1rem;
+  font-weight: 900;
+  color: var(--blue-900);
+}
+
+.event-card-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.event-card-desc {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.7;
+}
 .cta-banner {
   position: relative;
   min-height: 380px;
@@ -1202,6 +1305,7 @@ footer span {
   .about-page,
   .reservation-page,
   .contact-page,
+  .event-page,
   .bundle-section,
   .review-section,
   .site-footer,
@@ -1252,6 +1356,7 @@ footer span {
   .about-page,
   .reservation-page,
   .contact-page,
+  .event-page,
   .bundle-section,
   .review-section {
     padding-top: 68px;
@@ -1281,7 +1386,10 @@ footer span {
 
   .about-page-hero,
   .about-page-values,
-  .contact-panel {
+  .contact-panel,
+  .event-hero,
+  .event-meta,
+  .event-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1329,6 +1437,7 @@ footer span {
   .about-page,
   .reservation-page,
   .contact-page,
+  .event-page,
   .bundle-section,
   .review-section {
     padding-left: 18px;
