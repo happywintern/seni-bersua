@@ -426,6 +426,7 @@ object ServerDatabase {
         }
         withConnection { connection ->
             createSchema(connection)
+            normalizeBlankMenuImageUrlsTransactional(connection)
             ensureOutletTransactional(
                 connection = connection,
                 outletId = DEFAULT_OUTLET_ID,
@@ -1105,27 +1106,47 @@ object ServerDatabase {
         if (normalizedCode.isBlank()) return@withConnection null
         val normalizedRole = role.trim().uppercase()
         if (normalizedRole !in setOf("OWNER", "CASHIER")) return@withConnection null
-        val scopedOutletId = normalizeOutletId(outletId)
+        val scopedOutletId = outletId
+            ?.trim()
+            ?.replace(Regex("\\s+"), "-")
+            ?.take(64)
+            ?.ifBlank { null }
         if (!usingTurso) connection.autoCommit = false
         try {
             purgeExpiredApiAuthPairingCodesTransactional(connection)
             val now = Instant.now().toString()
             val row = connection.prepareStatement(
-                """
-                SELECT pairing_code, role, outlet_id, expires_at
-                FROM api_auth_pairing_code
-                WHERE pairing_code = ?
-                  AND role = ?
-                  AND outlet_id = ?
-                  AND used_at IS NULL
-                  AND datetime(expires_at) > datetime(?)
-                LIMIT 1
-                """.trimIndent()
+                if (scopedOutletId == null) {
+                    """
+                    SELECT pairing_code, role, outlet_id, expires_at
+                    FROM api_auth_pairing_code
+                    WHERE pairing_code = ?
+                      AND (
+                        expires_at = ?
+                        OR datetime(expires_at) > datetime(?)
+                      )
+                    LIMIT 1
+                    """.trimIndent()
+                } else {
+                    """
+                    SELECT pairing_code, role, outlet_id, expires_at
+                    FROM api_auth_pairing_code
+                    WHERE pairing_code = ?
+                      AND (
+                        expires_at = ?
+                        OR datetime(expires_at) > datetime(?)
+                      )
+                    ORDER BY CASE WHEN outlet_id = ? THEN 0 ELSE 1 END
+                    LIMIT 1
+                    """.trimIndent()
+                }
             ).use { statement ->
                 statement.setString(1, normalizedCode)
-                statement.setString(2, normalizedRole)
-                statement.setString(3, scopedOutletId)
-                statement.setString(4, now)
+                statement.setString(2, API_PAIRING_NEVER_EXPIRES_AT)
+                statement.setString(3, now)
+                if (scopedOutletId != null) {
+                    statement.setString(4, scopedOutletId)
+                }
                 statement.executeQuery().use { rs ->
                     if (!rs.next()) return@use null
                     ApiAuthPairingCodeRow(
@@ -1142,14 +1163,13 @@ object ServerDatabase {
             connection.prepareStatement(
                 """
                 UPDATE api_auth_pairing_code
-                SET used_at = ?, used_by_session_id = ?, expires_at = ?
-                WHERE pairing_code = ? AND used_at IS NULL
+                SET used_at = ?, used_by_session_id = ?
+                WHERE pairing_code = ?
                 """.trimIndent()
             ).use { statement ->
                 statement.setString(1, now)
                 statement.setString(2, "redeemed")
-                statement.setString(3, now)
-                statement.setString(4, normalizedCode)
+                statement.setString(3, normalizedCode)
                 val updated = executeWriteCount(statement)
                 if (updated <= 0) {
                     if (!usingTurso) connection.rollback()
@@ -1159,7 +1179,7 @@ object ServerDatabase {
             if (!usingTurso) connection.commit()
             ServerAuthPairingCodeDto(
                 pairingCode = row.pairingCode,
-                role = row.role,
+                role = normalizedRole,
                 outletId = row.outletId,
                 issuedAt = now,
                 expiresAt = row.expiresAt,
@@ -1417,7 +1437,9 @@ object ServerDatabase {
                                 price = rs.getLong("price"),
                                 groupId = resolvedGroupId,
                                 groupName = resolvedGroupName,
-                                imageUrl = rs.getString("image_url"),
+                                imageUrl = BackblazeMenuImageStorage.resolveReadableImageUrl(
+                                    rs.getString("image_url")?.trim()?.ifBlank { null }
+                                ),
                                 outletId = rs.getString("outlet_id") ?: DEFAULT_OUTLET_ID,
                             )
                         )
@@ -1436,7 +1458,7 @@ object ServerDatabase {
                 price = it.price,
                 groupId = it.groupId,
                 groupName = it.groupName,
-                imageUrl = it.imageUrl,
+                imageUrl = BackblazeMenuImageStorage.resolveReadableImageUrl(it.imageUrl),
                 outletId = it.outletId,
             )
         }
@@ -1494,7 +1516,10 @@ object ServerDatabase {
                 price = excluded.price,
                 group_id = excluded.group_id,
                 group_name = excluded.group_name,
-                image_url = excluded.image_url,
+                image_url = CASE
+                    WHEN excluded.image_url IS NULL OR trim(excluded.image_url) = '' THEN menu_item.image_url
+                    ELSE excluded.image_url
+                END,
                 outlet_id = excluded.outlet_id
             """.trimIndent()
         ).use { statement ->
@@ -3336,10 +3361,12 @@ object ServerDatabase {
         connection.prepareStatement(
             """
             DELETE FROM api_auth_pairing_code
-            WHERE used_at IS NOT NULL OR datetime(expires_at) <= datetime(?)
+            WHERE expires_at <> ?
+              AND datetime(expires_at) <= datetime(?)
             """.trimIndent()
         ).use { statement ->
-            statement.setString(1, now)
+            statement.setString(1, API_PAIRING_NEVER_EXPIRES_AT)
+            statement.setString(2, now)
             executeWrite(statement)
         }
     }
@@ -3515,6 +3542,18 @@ object ServerDatabase {
         return UUID.nameUUIDFromBytes("table:$outletId:$index".toByteArray()).toString()
     }
 
+    private fun normalizeBlankMenuImageUrlsTransactional(connection: Connection) {
+        connection.prepareStatement(
+            """
+            UPDATE menu_item
+            SET image_url = NULL
+            WHERE image_url IS NOT NULL AND trim(image_url) = ''
+            """.trimIndent()
+        ).use { statement ->
+            executeWrite(statement)
+        }
+    }
+
     private fun seededTableIndex(outletId: String, uuid: String, maxCount: Int): Int? {
         val clampedCount = maxCount.coerceIn(1, 500)
         for (index in 1..clampedCount) {
@@ -3550,7 +3589,7 @@ object ServerDatabase {
                                 price = rs.getLong("price"),
                                 groupId = resolvedGroupId,
                                 groupName = resolvedGroupName,
-                                imageUrl = rs.getString("image_url"),
+                                imageUrl = rs.getString("image_url")?.trim()?.ifBlank { null },
                                 outletId = rs.getString("outlet_id") ?: DEFAULT_OUTLET_ID,
                             )
                         )

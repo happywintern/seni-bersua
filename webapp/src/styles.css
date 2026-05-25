@@ -599,6 +599,12 @@ main {
   background: #f7f9fc;
 }
 
+.web-admin-subrow {
+  margin-top: 4px;
+  color: #5f6b7a;
+  font-size: 0.85rem;
+}
+
 .menu-page-card-body {
   padding: 18px;
 }

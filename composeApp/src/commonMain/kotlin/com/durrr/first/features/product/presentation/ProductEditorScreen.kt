@@ -60,6 +60,12 @@ private val HiddenProductCategoryIds = setOf(
     "grp-rekomendasi-promo",
 )
 
+private fun isLocalDeviceImageUri(value: String?): Boolean {
+    val normalized = value?.trim().orEmpty()
+    return normalized.startsWith("content://", ignoreCase = true) ||
+        normalized.startsWith("file://", ignoreCase = true)
+}
+
 private fun normalizeCurrencyInput(value: String, maxDigits: Int = 12): String {
     return value.filter(Char::isDigit).take(maxDigits)
 }
@@ -175,22 +181,25 @@ fun ProductEditorScreen(
         scope.launch {
             var resolvedImageUrl = itemImageUrl.trim().ifBlank { null }
             val baseUrl = serverBaseUrl()
+            var localImagePendingServerUpload = false
+            var uploadErrorMessage: String? = null
             if (
                 !baseUrl.isNullOrBlank() &&
                 !resolvedImageUrl.isNullOrBlank() &&
-                (
-                    resolvedImageUrl.startsWith("content://", ignoreCase = true) ||
-                        resolvedImageUrl.startsWith("file://", ignoreCase = true)
-                    )
+                isLocalDeviceImageUri(resolvedImageUrl)
             ) {
-                val uploadedImageUrl = runCatching {
+                val uploadResult = runCatching {
                     uploadMenuImage(baseUrl, resolvedImageUrl, outletId)
-                }.getOrNull()
+                }
+                val uploadedImageUrl = uploadResult.getOrNull()
+                if (uploadedImageUrl.isNullOrBlank()) {
+                    uploadErrorMessage = uploadResult.exceptionOrNull()?.message
+                }
                 if (!uploadedImageUrl.isNullOrBlank()) {
                     resolvedImageUrl = uploadedImageUrl
                     itemImageUrl = uploadedImageUrl
                 } else {
-                    statusMessage = "Foto masih lokal di device. Koneksi server diperlukan untuk upload foto."
+                    localImagePendingServerUpload = true
                 }
             }
 
@@ -207,8 +216,13 @@ fun ProductEditorScreen(
             repo.upsertItem(model, outletId)
             repo.assignModifierGroupsToItem(model.id, selectedModifierGroupIds.toList(), outletId)
 
-            if (baseUrl != null) runCatching {
+            if (!baseUrl.isNullOrBlank() && !localImagePendingServerUpload) runCatching {
                 menuSyncRepository.pushToServer(baseUrl, outletId)
+            }
+            if (localImagePendingServerUpload) {
+                val reason = uploadErrorMessage?.takeIf { it.isNotBlank() } ?: "Koneksi/server upload belum siap."
+                statusMessage = "Produk tersimpan lokal. Foto belum terupload ke server. Detail: $reason"
+                return@launch
             }
             onSaved()
         }

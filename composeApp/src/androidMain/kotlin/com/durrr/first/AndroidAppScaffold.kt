@@ -373,6 +373,8 @@ fun AndroidAppScaffold(
                         SettingsScreen(
                             settingsRepository = dependencies.settingsRepository,
                             pickImage = dependencies.pickImage,
+                            menuRepository = dependencies.menuRepository,
+                            uploadMenuImage = dependencies.uploadMenuImage,
                             menuSyncRepository = dependencies.menuSyncRepository,
                             orderSyncRepository = dependencies.orderSyncRepository,
                             transaksiSyncRepository = dependencies.transaksiSyncRepository,

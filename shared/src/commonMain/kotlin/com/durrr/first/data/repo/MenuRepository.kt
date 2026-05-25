@@ -130,7 +130,7 @@ class MenuRepository(private val db: TokoDatabase) {
                 price = parseLong(it.harga),
                 groupId = it.id_group_item,
                 code = it.kode,
-                imageUrl = it.keterangan,
+                imageUrl = it.keterangan?.trim()?.ifBlank { null },
                 isActive = it.is_delete == null || it.is_delete == "0",
                 outletId = it.outlet_id,
             )
@@ -149,7 +149,7 @@ class MenuRepository(private val db: TokoDatabase) {
             id_group_item = item.groupId,
             is_delete = if (item.isActive) "0" else "1",
             kode = item.code,
-            keterangan = item.imageUrl,
+            keterangan = item.imageUrl?.trim()?.ifBlank { null },
             jenis_item = null,
             outlet_id = outletId,
         )

@@ -20,6 +20,8 @@ import io.ktor.server.response.*
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.*
+import io.ktor.utils.io.readRemaining
+import io.ktor.utils.io.core.readBytes
 import com.durrr.first.network.dto.AssignProductModifiersRequest
 import com.durrr.first.network.dto.ServerAuthSessionLoginRequest
 import com.durrr.first.network.dto.ServerAuthPairingCodeCreateRequest
@@ -50,6 +52,7 @@ import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonPrimitive
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import org.slf4j.LoggerFactory
 
 fun main() {
     val serverPort = EnvConfig.getInt("SUCASH_SERVER_PORT", SERVER_PORT)
@@ -60,6 +63,7 @@ fun main() {
 
 fun Application.module() {
     ServerDatabase.init()
+    log.info(BackblazeMenuImageStorage.configurationSummary())
     val reservationLimiter = reservationRateLimiter
     install(ContentNegotiation) {
         json(Json {
@@ -244,26 +248,22 @@ fun Application.module() {
                     )
                     return@post
                 }
-                val scopedOutletId = call.requireScopedOutletId(
-                    rawOutletId = request.outletId,
-                    source = "outlet_id",
-                ) ?: return@post
-                if (!call.ensureActiveOutlet(scopedOutletId)) return@post
                 val consumed = ServerDatabase.consumeApiAuthPairingCode(
                     pairingCode = request.pairingCode,
                     role = requestedRole,
-                    outletId = scopedOutletId,
+                    outletId = request.outletId,
                 )
                 if (consumed == null) {
                     call.respondApiError(
                         status = HttpStatusCode.Unauthorized,
                         message = "Pairing redeem failed",
-                        error = "Pairing code is invalid, expired, or already used",
+                        error = "Pairing code is invalid or expired",
                     )
                     return@post
                 }
+                if (!call.ensureActiveOutlet(consumed.outletId)) return@post
                 val session = ServerDatabase.issueApiAuthSession(
-                    role = consumed.role,
+                    role = requestedRole,
                     userId = request.userId,
                     userName = request.userName,
                     outletId = consumed.outletId,
@@ -677,7 +677,8 @@ fun Application.module() {
                 var fileContentType: String? = null
 
                 val multipart = call.receiveMultipart()
-                multipart.forEachPart { part ->
+                while (true) {
+                    val part = multipart.readPart() ?: break
                     when (part) {
                         is PartData.FormItem -> if (part.name == "outlet_id") {
                             outletIdFromForm = part.value.trim()
@@ -685,7 +686,7 @@ fun Application.module() {
                         is PartData.FileItem -> if (part.name == "file") {
                             originalFileName = part.originalFileName
                             fileContentType = part.contentType?.toString()
-                            fileBytes = part.streamProvider().readBytes()
+                            fileBytes = part.provider().readRemaining().readBytes()
                         }
                         else -> Unit
                     }
@@ -1297,6 +1298,7 @@ private fun resolveWebDistDirectory(): File? {
 }
 
 private const val MAX_MENU_IMAGE_BYTES = 5 * 1024 * 1024
+private val mediaLogger = LoggerFactory.getLogger("MenuImageStorage")
 
 private fun resolveMediaUploadDirectory(): File {
     val configuredPath = EnvConfig.get("SUCASH_MEDIA_UPLOAD_DIR", "data/uploads").orEmpty()
@@ -1315,6 +1317,21 @@ private fun saveMenuImageFile(
     contentType: String?,
     bytes: ByteArray,
 ): String {
+    if (BackblazeMenuImageStorage.isConfigured()) {
+        runCatching {
+            mediaLogger.info("Uploading menu image to Backblaze for outlet={}", outletId)
+            return BackblazeMenuImageStorage.uploadMenuImage(
+                outletId = outletId,
+                originalFileName = originalFileName,
+                contentType = contentType,
+                bytes = bytes,
+            )
+        }.onFailure { error ->
+            // Fallback to local storage if Backblaze fails to avoid blocking owner workflows.
+            mediaLogger.warn("Backblaze upload failed, falling back to local storage: {}", error.message)
+        }
+    }
+
     val extension = inferImageExtension(originalFileName, contentType)
     val fileName = "${System.currentTimeMillis()}-${UUID.randomUUID()}.$extension"
     val outletSafe = outletId.trim().ifBlank { DEFAULT_API_OUTLET_ID }
@@ -1323,6 +1340,7 @@ private fun saveMenuImageFile(
     val targetFile = resolveMediaUploadDirectory().resolve(relativePath)
     targetFile.parentFile?.mkdirs()
     targetFile.writeBytes(bytes)
+    mediaLogger.info("Stored menu image in local media dir: {}", relativePath)
     return "/media/$relativePath"
 }
 

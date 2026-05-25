@@ -196,6 +196,8 @@ class SettingsRepository(private val db: TokoDatabase) {
                 db.tokoQueries.upsertAppSetting(KEY_SERVER_SESSION_OUTLET_ID, normalizedOutletId)
                 db.tokoQueries.upsertAppSetting(KEY_SERVER_SESSION_ISSUED_AT, session.issuedAt.trim())
                 db.tokoQueries.upsertAppSetting(KEY_SERVER_SESSION_EXPIRES_AT, session.expiresAt.trim())
+                // Keep active local scope aligned with paired server outlet.
+                db.tokoQueries.upsertAppSetting(KEY_OUTLET_ID, normalizedOutletId)
 
                 // Multi-outlet/user scoped slots.
                 db.tokoQueries.upsertAppSetting(scope.tokenKey, session.accessToken.trim())

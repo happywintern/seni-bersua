@@ -1,5 +1,6 @@
 const STORAGE_API_BASE_URL = "sucash_web_api_base_url";
 const STORAGE_OUTLET_ID = "sucash_web_outlet_id";
+const STORAGE_BEARER_TOKEN = "sucash_web_bearer_token";
 const DEFAULT_OUTLET_ID = "default";
 
 function normalizeBaseUrl(value) {
@@ -42,10 +43,26 @@ export function getWebServerSettings() {
   return {
     apiBaseUrl: getApiBaseUrl(),
     outletId: getOutletId(),
+    bearerToken: getBearerToken(),
   };
 }
 
 export function buildApiUrl(path) {
   const safePath = path.startsWith("/") ? path : `/${path}`;
   return `${getApiBaseUrl()}${safePath}`;
+}
+
+export function getBearerToken() {
+  if (typeof window === "undefined") return "";
+  return (window.localStorage.getItem(STORAGE_BEARER_TOKEN) || "").trim();
+}
+
+export function setBearerToken(value) {
+  if (typeof window === "undefined") return;
+  const normalized = (value || "").trim();
+  if (normalized) {
+    window.localStorage.setItem(STORAGE_BEARER_TOKEN, normalized);
+  } else {
+    window.localStorage.removeItem(STORAGE_BEARER_TOKEN);
+  }
 }

@@ -1,4 +1,4 @@
-import { buildApiUrl, getOutletId } from "./serverConfig";
+import { buildApiUrl, getBearerToken, getOutletId } from "./serverConfig";
 
 const CARD_ACCENTS = [
   "#f0e6d3",
@@ -33,6 +33,12 @@ function parseEnvelope(data) {
   return data;
 }
 
+function buildAuthHeaders(bearerToken) {
+  const token = (bearerToken || "").trim();
+  if (!token) return {};
+  return { Authorization: `Bearer ${token}` };
+}
+
 export async function fetchMenuItemsFromServer(outletId = getOutletId()) {
   const endpoint = `${buildApiUrl("/api/menu")}?outlet=${encodeURIComponent(outletId)}`;
   const response = await fetch(endpoint);
@@ -62,4 +68,38 @@ export async function fetchMenuItemsFromServer(outletId = getOutletId()) {
       imageUrl: item.imageUrl || item.image_url || null,
     };
   });
+}
+
+export async function fetchReservationsFromServer({
+  outletId = getOutletId(),
+  bearerToken = getBearerToken(),
+  statuses = ["PENDING", "CONFIRMED", "SEATED"],
+} = {}) {
+  const statusParam = Array.isArray(statuses) ? statuses.filter(Boolean).join(",") : "";
+  const endpoint =
+    `${buildApiUrl("/api/reservations")}` +
+    `?outlet=${encodeURIComponent(outletId)}` +
+    (statusParam ? `&status=${encodeURIComponent(statusParam)}` : "");
+
+  const response = await fetch(endpoint, {
+    headers: {
+      ...buildAuthHeaders(bearerToken),
+    },
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(body?.error || body?.message || `HTTP ${response.status}`);
+  }
+  const payload = parseEnvelope(body);
+  if (!Array.isArray(payload)) {
+    throw new Error("Invalid reservation payload");
+  }
+  return payload.map((item, index) => ({
+    id: item.id || `res_${index}`,
+    customerName: (item.customerName || item.customer_name || "Unknown").trim(),
+    partySize: Number(item.partySize || item.party_size || 0),
+    reservationAt: item.reservationAt || item.reservation_at || "",
+    status: (item.status || "").toUpperCase(),
+    note: item.note || "",
+  }));
 }

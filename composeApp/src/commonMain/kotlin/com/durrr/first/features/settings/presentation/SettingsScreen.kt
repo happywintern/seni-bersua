@@ -27,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.durrr.first.data.repo.MenuRepository
 import com.durrr.first.data.repo.MenuSyncRepository
 import com.durrr.first.data.repo.OrderSyncRepository
 import com.durrr.first.data.repo.ServerAuthRepository
@@ -45,6 +46,8 @@ import kotlinx.coroutines.launch
 fun SettingsScreen(
     settingsRepository: SettingsRepository,
     pickImage: ((String?) -> Unit) -> Unit,
+    menuRepository: MenuRepository? = null,
+    uploadMenuImage: suspend (baseUrl: String, localUri: String, outletId: String) -> String? = { _, _, _ -> null },
     menuSyncRepository: MenuSyncRepository? = null,
     orderSyncRepository: OrderSyncRepository? = null,
     transaksiSyncRepository: TransaksiSyncRepository? = null,
@@ -128,6 +131,39 @@ fun SettingsScreen(
             if (!ownerAccess) {
                 error("Aksi ini khusus Owner.")
             }
+        }
+        suspend fun uploadPendingMenuImagesForSync(baseUrl: String, outletId: String): String {
+            val repo = menuRepository ?: return "menu_image_upload:skipped(no_repo)"
+            val candidates = repo.getItems(outletId)
+                .filter { it.isActive }
+                .filter { isLocalDeviceImageUri(it.imageUrl) }
+            if (candidates.isEmpty()) return "menu_image_upload:0"
+
+            var uploadedCount = 0
+            val failures = mutableListOf<String>()
+            candidates.forEach { item ->
+                val localUri = item.imageUrl?.trim().orEmpty()
+                val uploaded = runCatching {
+                    uploadMenuImage(baseUrl, localUri, outletId)
+                }.getOrElse { error ->
+                    failures += "${item.name}: ${error.message ?: "upload error"}"
+                    null
+                }
+                val finalUrl = uploaded?.trim().orEmpty()
+                if (finalUrl.isNotBlank() && !isLocalDeviceImageUri(finalUrl)) {
+                    repo.upsertItem(item.copy(imageUrl = finalUrl), outletId)
+                    uploadedCount += 1
+                } else if (failures.none { it.startsWith("${item.name}:") }) {
+                    failures += "${item.name}: upload returned empty URL"
+                }
+            }
+            if (failures.isNotEmpty()) {
+                error(
+                    "Upload foto produk belum tuntas ($uploadedCount/${candidates.size} berhasil). " +
+                        "Contoh gagal: ${failures.first()}"
+                )
+            }
+            return "menu_image_upload:$uploadedCount/${candidates.size}"
         }
 
         AppSectionHeader("Settings", "Receipt and local app configuration")
@@ -379,6 +415,7 @@ fun SettingsScreen(
                                     }
                                     menuSyncRepository?.let {
                                         if (ownerAccess) {
+                                            results += uploadPendingMenuImagesForSync(baseUrl, currentOutletId())
                                             val pushedMenu = it.pushToServer(baseUrl, currentOutletId())
                                             results += "menu_push:$pushedMenu"
                                         } else {
@@ -468,8 +505,11 @@ fun SettingsScreen(
                                     scope.launch {
                                         runSyncAction("push_menu") {
                                             requireOwnerAccessOrFail()
-                                            val pushed = menuSyncRepository.pushToServer(requireBaseUrl(), currentOutletId())
-                                            "Pushed $pushed menu item(s)"
+                                            val baseUrl = requireBaseUrl()
+                                            val outlet = currentOutletId()
+                                            val imageResult = uploadPendingMenuImagesForSync(baseUrl, outlet)
+                                            val pushed = menuSyncRepository.pushToServer(baseUrl, outlet)
+                                            "Pushed $pushed menu item(s), $imageResult"
                                         }
                                     }
                                 },
@@ -493,10 +533,11 @@ fun SettingsScreen(
                                             val baseUrl = requireBaseUrl()
                                             val outlet = currentOutletId()
                                             val flushed = transaksiSyncRepository?.flushPending(baseUrl, outlet) ?: 0
+                                            val imageResult = uploadPendingMenuImagesForSync(baseUrl, outlet)
                                             val pushed = menuSyncRepository.pushToServer(baseUrl, outlet)
                                             val pulled = menuSyncRepository.pullFromServer(baseUrl, outlet)
                                             val pulledOrders = orderSyncRepository?.pullOrders(baseUrl, outlet) ?: 0
-                                            "Aligned data (trx_flush:$flushed, menu_push:$pushed, menu_pull:$pulled, orders_pull:$pulledOrders)"
+                                            "Aligned data ($imageResult, trx_flush:$flushed, menu_push:$pushed, menu_pull:$pulled, orders_pull:$pulledOrders)"
                                         }
                                     }
                                 },
@@ -603,6 +644,12 @@ fun SettingsScreen(
                 .padding(Dimens.md),
         )
     }
+}
+
+private fun isLocalDeviceImageUri(value: String?): Boolean {
+    val normalized = value?.trim().orEmpty()
+    return normalized.startsWith("content://", ignoreCase = true) ||
+        normalized.startsWith("file://", ignoreCase = true)
 }
 
 private fun notificationLevelForMessage(message: String): AppNotificationLevel {

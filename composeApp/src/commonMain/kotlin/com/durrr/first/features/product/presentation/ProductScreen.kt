@@ -102,14 +102,6 @@ fun ProductScreen(
 
     LaunchedEffect(Unit) {
         refresh()
-        val baseUrl = serverBaseUrl()
-        if (baseUrl != null) {
-            runCatching {
-                val pulled = menuSyncRepository.pullFromServer(baseUrl, currentOutletId())
-                refresh()
-                syncMessage = "Menu synced: $pulled item(s)"
-            }.onFailure { syncMessage = it.message ?: "Sync skipped" }
-        }
     }
 
     LaunchedEffect(productGridState) {

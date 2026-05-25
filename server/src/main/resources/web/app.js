@@ -7,7 +7,8 @@ const isTablePage = Boolean(tableMatch);
 const isDashboardPage = path === "/dashboard";
 const isAdminPage = path === "/admin";
 const tableUuid = tableMatch ? tableMatch[1] : "";
-const initialOutletId = search.get("outlet") || "default";
+const outletFromQuery = search.get("outlet");
+const initialOutletId = outletFromQuery || "default";
 const NEVER_PAIRING_EXPIRY = "9999-12-31T23:59:59Z";
 const idNumberFormatter = new Intl.NumberFormat("id-ID", {
   maximumFractionDigits: 0,
@@ -56,6 +57,16 @@ function categoryFromItem(item) {
   const groupId = (item?.groupId || "").trim();
   if (groupId.length > 0) return groupId;
   return "Kategori";
+}
+
+function resolveMenuImageUrl(raw) {
+  const value = (raw || "").trim();
+  if (!value) return "";
+  if (/^(https?:)?\/\//i.test(value) || value.startsWith("data:") || value.startsWith("blob:")) {
+    return value;
+  }
+  if (value.startsWith("/")) return value;
+  return `/${value}`;
 }
 
 function lineModifierSignature(modifiers) {
@@ -227,24 +238,49 @@ function TableOrderingPage() {
   const hasQuery = query.trim().length > 0;
 
   async function loadAll() {
+    let scopedOutletId = (outletId || "").trim() || "default";
+    let resolverMessage = "";
     try {
-      let scopedOutletId = outletId;
-      const resolvedScope = await api(`/api/tables/${tableUuid}/outlet`);
-      const resolvedOutletId = resolvedScope?.outletId || resolvedScope?.outlet_id;
-      if (resolvedOutletId && resolvedOutletId !== outletId) {
-        scopedOutletId = resolvedOutletId;
-        setOutletId(resolvedOutletId);
+      // If outlet is explicit in URL, trust it.
+      // This prevents table-outlet resolver mismatch from pulling wrong catalog.
+      if (!outletFromQuery) {
+        const resolvedScope = await api(`/api/tables/${tableUuid}/outlet`);
+        const resolvedOutletId = resolvedScope?.outletId || resolvedScope?.outlet_id;
+        if (resolvedOutletId && resolvedOutletId !== scopedOutletId) {
+          scopedOutletId = resolvedOutletId;
+          setOutletId(resolvedOutletId);
+        }
       }
-      const [tableData, catalogData] = await Promise.all([
-        api(`/api/tables/${tableUuid}?outlet=${encodeURIComponent(scopedOutletId)}`),
-        api(`/api/menu/catalog?outlet=${encodeURIComponent(scopedOutletId)}`),
-      ]);
-      setTable(tableData);
-      setCatalog(createCatalogModel(catalogData));
-      setMessage("");
     } catch (error) {
+      resolverMessage = `Outlet resolver skipped: ${error.message}`;
+    }
+
+    const [tableResult, catalogResult] = await Promise.allSettled([
+      api(`/api/tables/${tableUuid}?outlet=${encodeURIComponent(scopedOutletId)}`),
+      api(`/api/menu/catalog?outlet=${encodeURIComponent(scopedOutletId)}`),
+    ]);
+
+    let nextMessage = "";
+    if (tableResult.status === "fulfilled") {
+      setTable(tableResult.value);
+    } else {
+      setTable(null);
+      nextMessage = `Table info unavailable for outlet ${scopedOutletId}.`;
+    }
+
+    if (catalogResult.status === "fulfilled") {
+      setCatalog(createCatalogModel(catalogResult.value));
+    } else {
       setCatalog(createCatalogModel({}));
-      setMessage(error.message);
+      nextMessage = nextMessage
+        ? `${nextMessage} ${catalogResult.reason?.message || "Menu fetch failed."}`
+        : (catalogResult.reason?.message || "Menu fetch failed.");
+    }
+
+    if (!nextMessage && resolverMessage) {
+      setMessage(resolverMessage);
+    } else {
+      setMessage(nextMessage);
     }
   }
 
@@ -563,7 +599,14 @@ function TableOrderingPage() {
             placeholder="Cari Menu"
           />
           <button className="icon-btn" type="button" onClick={loadAll} aria-label="Refresh">↻</button>
-          <button className="icon-btn cart-btn" type="button" onClick={() => setShowCart((prev) => !prev)} aria-label="Open cart">
+          <button
+            className="icon-btn cart-btn"
+            type="button"
+            onClick={() => setShowCart((prev) => !prev)}
+            aria-label="Open cart"
+            disabled={cartCount === 0}
+            title={cartCount === 0 ? "Pilih item dulu" : "Open cart"}
+          >
             🛒
             <span className="badge">{cartCount}</span>
           </button>
@@ -598,6 +641,13 @@ function TableOrderingPage() {
               return (
                 <article className="product-card" key={item.id}>
                   <div className="product-thumb">
+                    {item.imageUrl ? (
+                      <img
+                        src={resolveMenuImageUrl(item.imageUrl)}
+                        alt={item.name}
+                        className="product-thumb-image"
+                      />
+                    ) : null}
                     <span className="product-cat">{categoryFromItem(item)}</span>
                   </div>
                   <div className="product-body">
@@ -1209,7 +1259,7 @@ function AdminPage() {
       });
       setPairingCode(generated?.pairingCode || generated?.pairing_code || "");
       setPairingExpiry(generated?.expiresAt || generated?.expires_at || "");
-      setMessage("Owner pairing code ready. This code is one-time and stays valid until redeemed.");
+      setMessage("Pairing code ready. Reusable until TTL expires.");
     } catch (error) {
       setMessage(error.message);
       setPairingCode("");
@@ -1418,7 +1468,7 @@ function AdminPage() {
             <div className="subtext">Code</div>
             <div className="pairing-code">{pairingCode}</div>
             <div className="subtext">
-              Expires: {pairingExpiry === NEVER_PAIRING_EXPIRY ? "Never (until redeemed)" : (pairingExpiry || "-")}
+              Expires: {pairingExpiry === NEVER_PAIRING_EXPIRY ? "Never (reusable)" : (pairingExpiry || "-")}
             </div>
             <div className="actions">
               <button className="btn btn-small" onClick={copyPairingCode}>Copy</button>

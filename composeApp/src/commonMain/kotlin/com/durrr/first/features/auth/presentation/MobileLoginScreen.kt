@@ -251,82 +251,82 @@ fun MobileLoginScreen(
                         Text("Masuk")
                     }
 
-                    if (!settingsRepository.getOptionalServerBaseUrl().isNullOrBlank()) {
-                        OutlinedTextField(
-                            value = serverPairingCode,
-                            onValueChange = { serverPairingCode = it.uppercase().take(16) },
-                            modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Server Pairing Code") },
-                            placeholder = { Text("Isi kode dari server admin") },
-                            singleLine = true,
-                        )
-                        Text(
-                            text = "Pairing code dibuat dari server admin. Mobile hanya redeem. Kosongkan kalau hanya pakai mode lokal.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                    // if (!settingsRepository.getOptionalServerBaseUrl().isNullOrBlank()) {
+                    //     OutlinedTextField(
+                    //         value = serverPairingCode,
+                    //         onValueChange = { serverPairingCode = it.uppercase().take(16) },
+                    //         modifier = Modifier.fillMaxWidth(),
+                    //         label = { Text("Server Pairing Code") },
+                    //         placeholder = { Text("Isi kode dari server admin") },
+                    //         singleLine = true,
+                    //     )
+                    //     Text(
+                    //         text = "Pairing code dibuat dari server admin. Mobile hanya redeem. Kosongkan kalau hanya pakai mode lokal.",
+                    //         style = MaterialTheme.typography.bodySmall,
+                    //         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    //     )
+                    // }
 
-                    TextButton(
-                        onClick = { showSetupUnlock = !showSetupUnlock },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(if (showSetupUnlock) "Batal Buka Setup" else "Buka Setup (Owner)")
-                    }
+                    // TextButton(
+                    //     onClick = { showSetupUnlock = !showSetupUnlock },
+                    //     modifier = Modifier.fillMaxWidth(),
+                    // ) {
+                    //     Text(if (showSetupUnlock) "Batal Buka Setup" else "Buka Setup (Owner)")
+                    // }
 
-                    if (showSetupUnlock) {
-                        OutlinedTextField(
-                            value = ownerSetupPin,
-                            onValueChange = { ownerSetupPin = it.filter(Char::isDigit).take(6) },
-                            modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Owner PIN untuk Setup") },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                            visualTransformation = if (ownerSetupPinVisible) {
-                                VisualTransformation.None
-                            } else {
-                                PasswordVisualTransformation()
-                            },
-                            trailingIcon = {
-                                TextButton(onClick = { ownerSetupPinVisible = !ownerSetupPinVisible }) {
-                                    Text(if (ownerSetupPinVisible) "Hide" else "Show")
-                                }
-                            },
-                            supportingText = {
-                                Text("${ownerSetupPin.length}/6 digit")
-                            },
-                        )
-                        Button(
-                            onClick = {
-                                if (!ownerPinReady) {
-                                    message = "Owner belum punya PIN. Lengkapi setup owner dulu."
-                                    return@Button
-                                }
-                                if (!settingsRepository.verifyOwnerPin(ownerSetupPin)) {
-                                    message = "Owner PIN salah."
-                                    return@Button
-                                }
-                                ownerSetupPin = ""
-                                ownerSetupPinVisible = false
-                                showSetupUnlock = false
-                                message = null
-                                onRequireSetup()
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = ownerPinReady,
-                        ) {
-                            Text("Lanjut ke Setup")
-                        }
-                    }
+                    // if (showSetupUnlock) {
+                    //     OutlinedTextField(
+                    //         value = ownerSetupPin,
+                    //         onValueChange = { ownerSetupPin = it.filter(Char::isDigit).take(6) },
+                    //         modifier = Modifier.fillMaxWidth(),
+                    //         label = { Text("Owner PIN untuk Setup") },
+                    //         singleLine = true,
+                    //         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    //         visualTransformation = if (ownerSetupPinVisible) {
+                    //             VisualTransformation.None
+                    //         } else {
+                    //             PasswordVisualTransformation()
+                    //         },
+                    //         trailingIcon = {
+                    //             TextButton(onClick = { ownerSetupPinVisible = !ownerSetupPinVisible }) {
+                    //                 Text(if (ownerSetupPinVisible) "Hide" else "Show")
+                    //             }
+                    //         },
+                    //         supportingText = {
+                    //             Text("${ownerSetupPin.length}/6 digit")
+                    //         },
+                    //     )
+                    //     Button(
+                    //         onClick = {
+                    //             if (!ownerPinReady) {
+                    //                 message = "Owner belum punya PIN. Lengkapi setup owner dulu."
+                    //                 return@Button
+                    //             }
+                    //             if (!settingsRepository.verifyOwnerPin(ownerSetupPin)) {
+                    //                 message = "Owner PIN salah."
+                    //                 return@Button
+                    //             }
+                    //             ownerSetupPin = ""
+                    //             ownerSetupPinVisible = false
+                    //             showSetupUnlock = false
+                    //             message = null
+                    //             onRequireSetup()
+                    //         },
+                    //         modifier = Modifier.fillMaxWidth(),
+                    //         enabled = ownerPinReady,
+                    //     ) {
+                    //         Text("Lanjut ke Setup")
+                    //     }
+                    // }
 
-                    if (!message.isNullOrBlank()) {
-                        Text(
-                            text = message.orEmpty(),
-                            modifier = Modifier.padding(top = Dimens.xxs),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
+                    // if (!message.isNullOrBlank()) {
+                    //     Text(
+                    //         text = message.orEmpty(),
+                    //         modifier = Modifier.padding(top = Dimens.xxs),
+                    //         style = MaterialTheme.typography.bodySmall,
+                    //         color = MaterialTheme.colorScheme.error,
+                    //     )
+                    // }
                 }
             }
         }
