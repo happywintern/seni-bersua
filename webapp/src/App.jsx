@@ -7,6 +7,7 @@ import AboutPage from "./AboutPage";
 import ReservationPage from "./ReservationPage";
 import ContactPage from "./ContactPage";
 import WebAdminPage from "./WebAdminPage";
+import FeedbackPage from "./FeedbackPage";
 import { fetchMenuItemsFromServer } from "./menuCatalogApi";
 import { getOutletId } from "./serverConfig";
 
@@ -115,6 +116,7 @@ function App() {
   const isReservationPage = window.location.pathname === "/web/reservasi";
   const isContactPage = window.location.pathname === "/web/kontak";
   const isWebAdminPage = window.location.pathname === "/web/admin";
+  const isFeedbackPage = window.location.pathname === "/web/feedback";
 
   useEffect(() => {
     let active = true;
@@ -159,7 +161,7 @@ function App() {
   }
 
   function navigateToSection(sectionId) {
-    if (isMenuPage || isAboutPage || isReservationPage || isContactPage || isEventPage) {
+    if (isMenuPage || isAboutPage || isReservationPage || isContactPage || isWebAdminPage || isFeedbackPage) {
       window.location.href = `/#${sectionId}`;
       return;
     }
@@ -186,6 +188,10 @@ function App() {
     window.location.href = "/web/admin";
   }
 
+  function navigateToFeedbackPage() {
+    window.location.href = "/web/feedback";
+  }
+
   return (
     <div className="page-shell">
       <nav className="topbar">
@@ -201,6 +207,7 @@ function App() {
           <button type="button" onClick={navigateToReservationPage}>Reservasi</button>
 
           <button type="button" onClick={navigateToContactPage}>Kontak Kami</button>
+          <button type="button" onClick={navigateToFeedbackPage}>Feedback</button>
           <button type="button" onClick={navigateToWebAdminPage}>Admin</button>
         </div>
       </nav>
@@ -214,6 +221,8 @@ function App() {
           <ReservationPage />
         ) : isContactPage ? (
           <ContactPage />
+        ) : isFeedbackPage ? (
+          <FeedbackPage />
         ) : isWebAdminPage ? (
           <WebAdminPage />
         ) : (

@@ -66,13 +66,17 @@ private fun isLocalDeviceImageUri(value: String?): Boolean {
         normalized.startsWith("file://", ignoreCase = true)
 }
 
-private fun normalizeCurrencyInput(value: String, maxDigits: Int = 12): String {
+private const val PRICE_MAX_DIGITS = 12
+private const val PRICE_MAX_VALUE = 999_999_999_999L
+
+private fun normalizeCurrencyInput(value: String, maxDigits: Int = PRICE_MAX_DIGITS): String {
     return value.filter(Char::isDigit).take(maxDigits)
 }
 
 private fun parseCurrencyInput(raw: String): Long? {
     val digits = raw.filter(Char::isDigit)
     if (digits.isBlank()) return null
+    if (digits.length > PRICE_MAX_DIGITS) return null
     return digits.toLongOrNull()
 }
 
@@ -155,14 +159,27 @@ fun ProductEditorScreen(
     }
 
     fun save() {
+        if (itemName.length > CatalogNameRules.MAX_LENGTH) {
+            statusMessage = "Nama barang maksimal ${CatalogNameRules.MAX_LENGTH} karakter."
+            return
+        }
         val name = CatalogNameRules.normalize(itemName)
         val price = parseCurrencyInput(itemPrice)
+        val priceDigitsCount = itemPrice.filter(Char::isDigit).length
         if (name.isBlank()) {
             statusMessage = "Nama barang wajib ASCII terbaca (maks ${CatalogNameRules.MAX_LENGTH} karakter)."
             return
         }
+        if (priceDigitsCount > PRICE_MAX_DIGITS) {
+            statusMessage = "Harga jual maksimal 12 digit."
+            return
+        }
         if (price == null || price < 0L) {
             statusMessage = "Harga jual harus angka valid."
+            return
+        }
+        if (price > PRICE_MAX_VALUE) {
+            statusMessage = "Harga jual maksimal ${formatNumber(PRICE_MAX_VALUE)} (12 digit)."
             return
         }
 
@@ -300,6 +317,7 @@ private fun ProductEditorContent(
     onSave: () -> Unit,
 ) {
     val selectedModifierCount = selectedModifierGroupIds.size
+    val itemNameTooLong = itemName.length > CatalogNameRules.MAX_LENGTH
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
@@ -334,6 +352,21 @@ private fun ProductEditorContent(
                 onValueChange = onItemNameChange,
                 label = { Text("Nama barang") },
                 modifier = Modifier.fillMaxWidth(),
+                isError = itemNameTooLong,
+                supportingText = {
+                    Text(
+                        text = if (itemNameTooLong) {
+                            "Nama barang maksimal ${CatalogNameRules.MAX_LENGTH} karakter. Saat ini ${itemName.length} karakter."
+                        } else {
+                            "${itemName.length}/${CatalogNameRules.MAX_LENGTH} karakter"
+                        },
+                        color = if (itemNameTooLong) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                },
             )
             OutlinedTextField(
                 value = itemCode,
@@ -346,7 +379,7 @@ private fun ProductEditorContent(
                 value = formatCurrencyInput(itemPrice),
                 onValueChange = onItemPriceChange,
                 label = { Text("Harga jual") },
-                supportingText = { Text("Format otomatis rupiah. Contoh: 32000 akan jadi 32.000.") },
+                supportingText = { Text("Format otomatis rupiah. Maksimal 12 digit (contoh: 32000 jadi 32.000).") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -528,6 +561,7 @@ private fun ProductEditorContent(
             }
             Button(
                 onClick = onSave,
+                enabled = !itemNameTooLong,
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = FigmaBlue, contentColor = Color.White),
             ) {

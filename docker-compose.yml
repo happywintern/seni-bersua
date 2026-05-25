@@ -35,7 +35,7 @@ services:
     depends_on:
       - server
     ports:
-      - "1001:1001"
+      - "${SUCASH_WEBAPP_HOST_PORT:-1001}:1001"
 
 volumes:
   sucash-server-data:

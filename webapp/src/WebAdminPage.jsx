@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { fetchMenuItemsFromServer, fetchReservationsFromServer } from "./menuCatalogApi";
+import { fetchFeedbackFromServer, fetchMenuItemsFromServer, fetchReservationsFromServer } from "./menuCatalogApi";
 import { getWebServerSettings, setApiBaseUrl, setBearerToken, setOutletId } from "./serverConfig";
 
 function WebAdminPage() {
@@ -13,7 +13,11 @@ function WebAdminPage() {
   const [reservationStatusFilter, setReservationStatusFilter] = useState("PENDING,CONFIRMED,SEATED");
   const [previewItems, setPreviewItems] = useState([]);
   const [reservations, setReservations] = useState([]);
+  const [feedbackRows, setFeedbackRows] = useState([]);
   const [hasLoadedReservations, setHasLoadedReservations] = useState(false);
+  const [hasLoadedFeedback, setHasLoadedFeedback] = useState(false);
+  const [loadingFeedback, setLoadingFeedback] = useState(false);
+  const [feedbackStatusFilter, setFeedbackStatusFilter] = useState("NEW,REVIEWED");
 
   useEffect(() => {
     const hasBaseUrl = (apiBaseUrl || "").trim().length > 0;
@@ -77,6 +81,34 @@ function WebAdminPage() {
     }
   }
 
+  async function handleLoadFeedback() {
+    setLoadingFeedback(true);
+    setMessage("");
+    try {
+      setApiBaseUrl(apiBaseUrl);
+      setOutletId(outletId);
+      setBearerToken(bearerToken);
+      const statuses = feedbackStatusFilter
+        .split(",")
+        .map((it) => it.trim().toUpperCase())
+        .filter(Boolean);
+      const rows = await fetchFeedbackFromServer({
+        outletId: (outletId || "").trim() || "default",
+        bearerToken,
+        statuses: statuses.length > 0 ? statuses : undefined,
+      });
+      setFeedbackRows(rows);
+      setHasLoadedFeedback(true);
+      setMessage(`Feedback outlet "${(outletId || "default").trim()}" terbaca: ${rows.length} data.`);
+    } catch (error) {
+      setFeedbackRows([]);
+      setHasLoadedFeedback(true);
+      setMessage(error?.message || "Gagal ambil feedback dari server.");
+    } finally {
+      setLoadingFeedback(false);
+    }
+  }
+
   return (
     <section className="web-admin-page">
       <div className="web-admin-card">
@@ -122,6 +154,15 @@ function WebAdminPage() {
               placeholder="Contoh: PENDING,CONFIRMED,SEATED"
             />
           </label>
+          <label>
+            Feedback Status Filter (comma-separated)
+            <input
+              type="text"
+              value={feedbackStatusFilter}
+              onChange={(event) => setFeedbackStatusFilter(event.target.value)}
+              placeholder="Contoh: NEW,REVIEWED,RESOLVED"
+            />
+          </label>
           <div className="web-admin-actions">
             <button type="submit" className="btn-blue">Save Settings</button>
             <button type="button" className="btn-blue btn-secondary" onClick={handleTestConnection} disabled={testing}>
@@ -134,6 +175,14 @@ function WebAdminPage() {
               disabled={loadingReservations}
             >
               {loadingReservations ? "Loading..." : "Load Reservation Requests"}
+            </button>
+            <button
+              type="button"
+              className="btn-blue btn-secondary"
+              onClick={handleLoadFeedback}
+              disabled={loadingFeedback}
+            >
+              {loadingFeedback ? "Loading..." : "Load Feedback"}
             </button>
           </div>
         </form>
@@ -178,6 +227,34 @@ function WebAdminPage() {
           <div className="web-admin-preview">
             <h3>Reservation Requests</h3>
             <p className="web-admin-subtitle">Belum ada request reservasi dari server untuk outlet + status filter ini.</p>
+          </div>
+        ) : null}
+
+        {feedbackRows.length > 0 ? (
+          <div className="web-admin-preview">
+            <h3>Feedback Requests</h3>
+            <p className="web-admin-subtitle">Source: live server API `/api/feedback` (protected by bearer + outlet).</p>
+            <ul>
+              {feedbackRows.map((feedback) => (
+                <li key={feedback.id}>
+                  <div>
+                    <span>{feedback.customerName}</span>
+                    <div className="web-admin-subrow">
+                      {feedback.status} · {feedback.rating > 0 ? `${feedback.rating}/5` : "No rating"}
+                    </div>
+                    <div className="web-admin-subrow">{feedback.subject || feedback.message}</div>
+                  </div>
+                  <strong>{feedback.id}</strong>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        {hasLoadedFeedback && feedbackRows.length === 0 ? (
+          <div className="web-admin-preview">
+            <h3>Feedback Requests</h3>
+            <p className="web-admin-subtitle">Belum ada feedback untuk outlet + status filter ini.</p>
           </div>
         ) : null}
       </div>

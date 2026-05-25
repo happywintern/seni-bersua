@@ -103,3 +103,81 @@ export async function fetchReservationsFromServer({
     note: item.note || "",
   }));
 }
+
+export async function submitFeedbackToServer({
+  customerName,
+  contact,
+  rating,
+  subject,
+  message,
+  outletId = getOutletId(),
+  website = "",
+}) {
+  const payload = {
+    customerName: (customerName || "").trim(),
+    contact: (contact || "").trim() || null,
+    rating: Number.isFinite(Number(rating)) ? Number(rating) : null,
+    subject: (subject || "").trim() || null,
+    message: (message || "").trim(),
+    website: (website || "").trim(),
+    outletId: (outletId || "").trim() || "default",
+    customer_name: (customerName || "").trim(),
+    outlet_id: (outletId || "").trim() || "default",
+  };
+
+  const response = await fetch(buildApiUrl("/api/feedback"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      data: payload,
+      message: "Create feedback",
+      error: null,
+    }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(body?.error || body?.message || `HTTP ${response.status}`);
+  }
+  const parsed = parseEnvelope(body);
+  return parsed || null;
+}
+
+export async function fetchFeedbackFromServer({
+  outletId = getOutletId(),
+  bearerToken = getBearerToken(),
+  statuses = ["NEW", "REVIEWED"],
+  limit = 100,
+} = {}) {
+  const statusParam = Array.isArray(statuses) ? statuses.filter(Boolean).join(",") : "";
+  const endpoint =
+    `${buildApiUrl("/api/feedback")}` +
+    `?outlet=${encodeURIComponent(outletId)}` +
+    (statusParam ? `&status=${encodeURIComponent(statusParam)}` : "") +
+    `&limit=${encodeURIComponent(Math.max(1, Math.min(200, Number(limit) || 100)))}`;
+
+  const response = await fetch(endpoint, {
+    headers: {
+      ...buildAuthHeaders(bearerToken),
+    },
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(body?.error || body?.message || `HTTP ${response.status}`);
+  }
+  const payload = parseEnvelope(body);
+  if (!Array.isArray(payload)) {
+    throw new Error("Invalid feedback payload");
+  }
+  return payload.map((item, index) => ({
+    id: item.id || `fb_${index}`,
+    customerName: (item.customerName || item.customer_name || "Guest").trim(),
+    contact: (item.contact || "").trim(),
+    rating: Number(item.rating || 0),
+    subject: (item.subject || "").trim(),
+    message: (item.message || "").trim(),
+    status: (item.status || "").toUpperCase(),
+    createdAt: item.createdAt || item.created_at || "",
+  }));
+}

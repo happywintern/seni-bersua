@@ -234,6 +234,8 @@ function TableOrderingPage() {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirmVisible, setConfirmVisible] = useState(false);
+  const [successPopupVisible, setSuccessPopupVisible] = useState(false);
+  const [successPopupText, setSuccessPopupText] = useState("");
   const [customizeState, setCustomizeState] = useState(null);
   const hasQuery = query.trim().length > 0;
 
@@ -439,6 +441,7 @@ function TableOrderingPage() {
           id: `line_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
           itemId: item.id,
           itemName: item.name,
+          imageUrl: item.imageUrl || "",
           unitPrice: item.price,
           qty: 1,
           modifiers: [],
@@ -488,6 +491,7 @@ function TableOrderingPage() {
           if (line.id !== customizeState.lineId) return line;
           return {
             ...line,
+            imageUrl: customizeState.item.imageUrl || line.imageUrl || "",
             unitPrice,
             qty: customizeState.qty,
             modifiers,
@@ -512,6 +516,7 @@ function TableOrderingPage() {
           id: `line_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
           itemId: customizeState.item.id,
           itemName: customizeState.item.name,
+          imageUrl: customizeState.item.imageUrl || "",
           unitPrice,
           qty: customizeState.qty,
           modifiers,
@@ -571,7 +576,12 @@ function TableOrderingPage() {
           error: null,
         }),
       });
-      setMessage(`Pesanan ${created.id.slice(0, 8)} berhasil dibuat. Silakan tunggu.`);
+      const shortId = (created?.id || "").slice(0, 8);
+      setMessage(`Pesanan ${shortId} berhasil dibuat. Silakan tunggu.`);
+      setSuccessPopupText(
+        `Order berhasil dibuat${shortId ? ` (${shortId})` : ""}, segera menuju ke kasir untuk konfirmasi.`
+      );
+      setSuccessPopupVisible(true);
       setCart([]);
       setShowCart(false);
       setConfirmVisible(false);
@@ -688,7 +698,15 @@ function TableOrderingPage() {
                 <ul className="list cart-list">
                   {cart.map((line) => (
                     <li key={line.id} className="cart-item">
-                      <div className="cart-item-thumb" />
+                      <div className="cart-item-thumb">
+                        {line.imageUrl ? (
+                          <img
+                            src={resolveMenuImageUrl(line.imageUrl)}
+                            alt={line.itemName}
+                            className="cart-item-thumb-image"
+                          />
+                        ) : null}
+                      </div>
                       <div className="cart-item-body">
                         <strong>{line.itemName}</strong>
                         {line.modifierSummary ? <p className="subtext">{line.modifierSummary}</p> : null}
@@ -796,6 +814,20 @@ function TableOrderingPage() {
             <div className="actions confirm-actions">
               <button className="btn chip-muted" onClick={() => setConfirmVisible(false)}>Tidak</button>
               <button className="btn btn-primary" onClick={checkout}>Ya</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {successPopupVisible ? (
+        <div className="modal-overlay" onClick={() => setSuccessPopupVisible(false)}>
+          <div className="confirm-card" onClick={(event) => event.stopPropagation()}>
+            <h3>Pesanan Berhasil</h3>
+            <p className="confirm-description">{successPopupText}</p>
+            <div className="actions confirm-actions">
+              <button className="btn btn-primary" onClick={() => setSuccessPopupVisible(false)}>
+                Oke
+              </button>
             </div>
           </div>
         </div>

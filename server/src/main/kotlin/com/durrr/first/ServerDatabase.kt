@@ -34,6 +34,7 @@ import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.PreparedStatement
 import java.sql.SQLException
+import java.sql.Types
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -48,6 +49,7 @@ private const val DEFAULT_OUTLET_ID = "default"
 private const val MAX_CATALOG_NAME_LENGTH = 50
 private const val DEFAULT_API_SESSION_TTL_SECONDS = 86400L
 private const val MIN_API_SESSION_TTL_SECONDS = 300L
+private const val API_SESSION_NEVER_EXPIRES_AT = "9999-12-31T23:59:59Z"
 private const val DEFAULT_API_PAIRING_TTL_SECONDS = 300L
 private const val MIN_API_PAIRING_TTL_SECONDS = 30L
 private const val MAX_API_PAIRING_TTL_SECONDS = 1800L
@@ -258,6 +260,61 @@ data class UpdateReservationStatusRequest(
 )
 
 @Serializable
+data class CreateFeedbackRequest(
+    @SerialName("customer_name")
+    val customerName: String? = null,
+    @SerialName("customerName")
+    val customerNameCamel: String? = null,
+    val contact: String? = null,
+    val rating: Int? = null,
+    val subject: String? = null,
+    val message: String? = null,
+    val website: String? = null,
+    @SerialName("outlet_id")
+    val outletId: String? = null,
+    @SerialName("outletId")
+    val outletIdCamel: String? = null,
+) {
+    fun resolvedCustomerName(): String {
+        return customerName.orEmpty()
+            .trim()
+            .ifBlank { customerNameCamel.orEmpty().trim() }
+    }
+
+    fun resolvedOutletId(): String? {
+        return outletId.orEmpty()
+            .trim()
+            .ifBlank { outletIdCamel.orEmpty().trim() }
+            .ifBlank { null }
+    }
+}
+
+@Serializable
+data class FeedbackView(
+    val id: String,
+    @SerialName("customer_name")
+    val customerName: String,
+    val contact: String? = null,
+    val rating: Int? = null,
+    val subject: String? = null,
+    val message: String,
+    val status: String,
+    @SerialName("outlet_id")
+    val outletId: String = DEFAULT_OUTLET_ID,
+    @SerialName("created_at")
+    val createdAt: String,
+    @SerialName("updated_at")
+    val updatedAt: String,
+)
+
+@Serializable
+data class UpdateFeedbackStatusRequest(
+    val status: String,
+    @SerialName("outlet_id")
+    val outletId: String? = null,
+)
+
+@Serializable
 data class UpdateOrderStatusRequest(
     val status: String,
     @SerialName("outlet_id")
@@ -340,7 +397,9 @@ object ServerDatabase {
         .orEmpty()
         .trim()
         .toLongOrNull()
-        ?.coerceAtLeast(MIN_API_SESSION_TTL_SECONDS)
+        ?.let { raw ->
+            if (raw <= 0L) 0L else raw.coerceAtLeast(MIN_API_SESSION_TTL_SECONDS)
+        }
         ?: DEFAULT_API_SESSION_TTL_SECONDS
     private val apiPairingTtlSeconds: Long = EnvConfig
         .get("SUCASH_API_PAIRING_TTL_SECONDS", DEFAULT_API_PAIRING_TTL_SECONDS.toString())
@@ -681,12 +740,16 @@ object ServerDatabase {
             WHERE outlet_id = ?
               AND role = 'OWNER'
               AND revoked_at IS NULL
-              AND datetime(expires_at) > datetime(?)
+              AND (
+                expires_at = ?
+                OR datetime(expires_at) > datetime(?)
+              )
             LIMIT 1
             """.trimIndent()
         ).use { statement ->
             statement.setString(1, scopedOutletId)
-            statement.setString(2, nowIso)
+            statement.setString(2, API_SESSION_NEVER_EXPIRES_AT)
+            statement.setString(3, nowIso)
             statement.executeQuery().use { rs -> rs.next() }
         }
     }
@@ -830,6 +893,10 @@ object ServerDatabase {
                 executeWrite(statement)
             }
             connection.prepareStatement("DELETE FROM cafe_reservation WHERE outlet_id = ?").use { statement ->
+                statement.setString(1, scopedOutletId)
+                executeWrite(statement)
+            }
+            connection.prepareStatement("DELETE FROM cafe_feedback WHERE outlet_id = ?").use { statement ->
                 statement.setString(1, scopedOutletId)
                 executeWrite(statement)
             }
@@ -1121,6 +1188,7 @@ object ServerDatabase {
                     SELECT pairing_code, role, outlet_id, expires_at
                     FROM api_auth_pairing_code
                     WHERE pairing_code = ?
+                      AND role = ?
                       AND (
                         expires_at = ?
                         OR datetime(expires_at) > datetime(?)
@@ -1132,6 +1200,7 @@ object ServerDatabase {
                     SELECT pairing_code, role, outlet_id, expires_at
                     FROM api_auth_pairing_code
                     WHERE pairing_code = ?
+                      AND role = ?
                       AND (
                         expires_at = ?
                         OR datetime(expires_at) > datetime(?)
@@ -1142,10 +1211,11 @@ object ServerDatabase {
                 }
             ).use { statement ->
                 statement.setString(1, normalizedCode)
-                statement.setString(2, API_PAIRING_NEVER_EXPIRES_AT)
-                statement.setString(3, now)
+                statement.setString(2, normalizedRole)
+                statement.setString(3, API_PAIRING_NEVER_EXPIRES_AT)
+                statement.setString(4, now)
                 if (scopedOutletId != null) {
-                    statement.setString(4, scopedOutletId)
+                    statement.setString(5, scopedOutletId)
                 }
                 statement.executeQuery().use { rs ->
                     if (!rs.next()) return@use null
@@ -1209,7 +1279,11 @@ object ServerDatabase {
         val normalizedDeviceId = normalizeDeviceId(deviceId)
         val now = Instant.now()
         val issuedAt = now.toString()
-        val expiresAt = now.plusSeconds(apiSessionTtlSeconds).toString()
+        val expiresAt = if (apiSessionTtlSeconds <= 0L) {
+            API_SESSION_NEVER_EXPIRES_AT
+        } else {
+            now.plusSeconds(apiSessionTtlSeconds).toString()
+        }
         val sessionId = "sess_${UUID.randomUUID().toString().replace("-", "")}"
         val accessToken = generateApiSessionToken()
         if (!usingTurso) connection.autoCommit = false
@@ -1324,7 +1398,11 @@ object ServerDatabase {
 
         val now = Instant.now()
         val refreshedAt = now.toString()
-        val nextExpiry = now.plusSeconds(apiSessionTtlSeconds).toString()
+        val nextExpiry = if (apiSessionTtlSeconds <= 0L) {
+            API_SESSION_NEVER_EXPIRES_AT
+        } else {
+            now.plusSeconds(apiSessionTtlSeconds).toString()
+        }
         connection.prepareStatement(
             """
             UPDATE api_auth_session
@@ -2001,6 +2079,180 @@ object ServerDatabase {
         }
     }
 
+    fun createFeedback(
+        request: CreateFeedbackRequest,
+        sourceIp: String? = null,
+    ): FeedbackView? = withConnection { connection ->
+        if (!usingTurso) connection.autoCommit = false
+        try {
+            if (request.website.orEmpty().trim().isNotEmpty()) return@withConnection null
+            val outletId = normalizeOutletId(request.resolvedOutletId())
+            val customerName = normalizeCatalogName(request.resolvedCustomerName())
+            val contact = normalizeContactValue(request.contact)
+            val rating = request.rating?.coerceIn(1, 5)
+            val subject = normalizeFeedbackSubject(request.subject)
+            val message = normalizeFeedbackMessage(request.message)
+            if (customerName.isBlank() || message.isBlank()) return@withConnection null
+
+            val now = Instant.now().toString()
+            val feedbackId = "FDB-${UUID.randomUUID().toString().substringBefore('-').uppercase()}"
+            connection.prepareStatement(
+                """
+                INSERT INTO cafe_feedback(
+                    id, customer_name, contact, rating, subject, message, status, outlet_id, source_ip, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """.trimIndent()
+            ).use { statement ->
+                statement.setString(1, feedbackId)
+                statement.setString(2, customerName)
+                statement.setString(3, contact)
+                if (rating == null) {
+                    statement.setNull(4, Types.INTEGER)
+                } else {
+                    statement.setInt(4, rating)
+                }
+                statement.setString(5, subject)
+                statement.setString(6, message)
+                statement.setString(7, "NEW")
+                statement.setString(8, outletId)
+                statement.setString(9, sourceIp?.take(64))
+                statement.setString(10, now)
+                statement.setString(11, now)
+                executeWrite(statement)
+            }
+
+            if (!usingTurso) connection.commit()
+            FeedbackView(
+                id = feedbackId,
+                customerName = customerName,
+                contact = contact,
+                rating = rating,
+                subject = subject,
+                message = message,
+                status = "NEW",
+                outletId = outletId,
+                createdAt = now,
+                updatedAt = now,
+            )
+        } catch (t: Throwable) {
+            if (!usingTurso) connection.rollback()
+            throw t
+        } finally {
+            if (!usingTurso) connection.autoCommit = true
+        }
+    }
+
+    fun listFeedback(
+        statuses: Set<String>,
+        outletId: String = DEFAULT_OUTLET_ID,
+        limit: Int = 100,
+    ): List<FeedbackView> = withConnection { connection ->
+        val scopedOutletId = normalizeOutletId(outletId)
+        val statusFilter = statuses
+            .map { it.trim().uppercase() }
+            .filter { it.isNotBlank() && it in setOf("NEW", "REVIEWED", "RESOLVED", "REJECTED") }
+            .toSet()
+        val safeLimit = limit.coerceIn(1, 200)
+
+        val sql = buildString {
+            append(
+                """
+                SELECT id, customer_name, contact, rating, subject, message, status, outlet_id, created_at, updated_at
+                FROM cafe_feedback
+                WHERE outlet_id = ?
+                """.trimIndent()
+            )
+            if (statusFilter.isNotEmpty()) {
+                append(" AND status IN (${statusFilter.joinToString(",") { "?" }})")
+            }
+            append(" ORDER BY created_at DESC")
+            append(" LIMIT $safeLimit")
+        }
+
+        connection.prepareStatement(sql).use { statement ->
+            statement.setString(1, scopedOutletId)
+            statusFilter.forEachIndexed { index, status ->
+                statement.setString(index + 2, status)
+            }
+            statement.executeQuery().use { rs ->
+                buildList {
+                    while (rs.next()) {
+                        add(
+                            FeedbackView(
+                                id = rs.getString("id"),
+                                customerName = rs.getString("customer_name"),
+                                contact = rs.getString("contact"),
+                                rating = rs.getInt("rating").takeIf { !rs.wasNull() },
+                                subject = rs.getString("subject"),
+                                message = rs.getString("message"),
+                                status = rs.getString("status"),
+                                outletId = rs.getString("outlet_id") ?: DEFAULT_OUTLET_ID,
+                                createdAt = rs.getString("created_at"),
+                                updatedAt = rs.getString("updated_at"),
+                            )
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fun updateFeedbackStatus(
+        feedbackId: String,
+        status: String,
+        outletId: String = DEFAULT_OUTLET_ID,
+    ): FeedbackView? = withConnection { connection ->
+        val scopedOutletId = normalizeOutletId(outletId)
+        val normalizedStatus = status.trim().uppercase()
+        if (normalizedStatus !in setOf("NEW", "REVIEWED", "RESOLVED", "REJECTED")) {
+            return@withConnection null
+        }
+
+        val now = Instant.now().toString()
+        connection.prepareStatement(
+            """
+            UPDATE cafe_feedback
+            SET status = ?, updated_at = ?
+            WHERE id = ? AND outlet_id = ?
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, normalizedStatus)
+            statement.setString(2, now)
+            statement.setString(3, feedbackId)
+            statement.setString(4, scopedOutletId)
+            val updated = executeWriteCount(statement)
+            if (updated == 0) return@withConnection null
+        }
+
+        connection.prepareStatement(
+            """
+            SELECT id, customer_name, contact, rating, subject, message, status, outlet_id, created_at, updated_at
+            FROM cafe_feedback
+            WHERE id = ? AND outlet_id = ?
+            LIMIT 1
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, feedbackId)
+            statement.setString(2, scopedOutletId)
+            statement.executeQuery().use { rs ->
+                if (!rs.next()) return@withConnection null
+                FeedbackView(
+                    id = rs.getString("id"),
+                    customerName = rs.getString("customer_name"),
+                    contact = rs.getString("contact"),
+                    rating = rs.getInt("rating").takeIf { !rs.wasNull() },
+                    subject = rs.getString("subject"),
+                    message = rs.getString("message"),
+                    status = rs.getString("status"),
+                    outletId = rs.getString("outlet_id") ?: DEFAULT_OUTLET_ID,
+                    createdAt = rs.getString("created_at"),
+                    updatedAt = rs.getString("updated_at"),
+                )
+            }
+        }
+    }
+
     fun listOrders(
         statuses: Set<String>,
         outletId: String = DEFAULT_OUTLET_ID,
@@ -2431,6 +2683,23 @@ object ServerDatabase {
             )
             statement.execute(
                 """
+                CREATE TABLE IF NOT EXISTS cafe_feedback (
+                    id TEXT PRIMARY KEY,
+                    customer_name TEXT NOT NULL,
+                    contact TEXT,
+                    rating INTEGER,
+                    subject TEXT,
+                    message TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    outlet_id TEXT NOT NULL DEFAULT 'default',
+                    source_ip TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """.trimIndent()
+            )
+            statement.execute(
+                """
                 CREATE TABLE IF NOT EXISTS transaksi_header (
                     id TEXT PRIMARY KEY,
                     created_at TEXT NOT NULL,
@@ -2644,6 +2913,7 @@ object ServerDatabase {
             statement.execute("CREATE INDEX IF NOT EXISTS idx_product_modifier_item_outlet ON product_modifier_group(id_item, outlet_id)")
             statement.execute("CREATE INDEX IF NOT EXISTS idx_order_header_outlet_status_date ON order_header(outlet_id, status, created_at)")
             statement.execute("CREATE INDEX IF NOT EXISTS idx_reservation_outlet_status_date ON cafe_reservation(outlet_id, status, reservation_at)")
+            statement.execute("CREATE INDEX IF NOT EXISTS idx_feedback_outlet_status_date ON cafe_feedback(outlet_id, status, created_at)")
             statement.execute("CREATE INDEX IF NOT EXISTS idx_transaksi_header_outlet_date ON transaksi_header(outlet_id, created_at)")
             statement.execute("CREATE INDEX IF NOT EXISTS idx_pembayaran_outlet_date ON pembayaran(outlet_id, paid_at)")
             statement.execute("CREATE INDEX IF NOT EXISTS idx_processed_event_outlet_event ON processed_event(outlet_id, event_id)")
@@ -2765,6 +3035,21 @@ object ServerDatabase {
                 status TEXT NOT NULL,
                 note TEXT,
                 outlet_id TEXT NOT NULL DEFAULT 'default',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """.trimIndent(),
+            """
+            CREATE TABLE IF NOT EXISTS cafe_feedback (
+                id TEXT PRIMARY KEY,
+                customer_name TEXT NOT NULL,
+                contact TEXT,
+                rating INTEGER,
+                subject TEXT,
+                message TEXT NOT NULL,
+                status TEXT NOT NULL,
+                outlet_id TEXT NOT NULL DEFAULT 'default',
+                source_ip TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
@@ -2957,6 +3242,7 @@ object ServerDatabase {
             "CREATE INDEX IF NOT EXISTS idx_product_modifier_item_outlet ON product_modifier_group(id_item, outlet_id)",
             "CREATE INDEX IF NOT EXISTS idx_order_header_outlet_status_date ON order_header(outlet_id, status, created_at)",
             "CREATE INDEX IF NOT EXISTS idx_reservation_outlet_status_date ON cafe_reservation(outlet_id, status, reservation_at)",
+            "CREATE INDEX IF NOT EXISTS idx_feedback_outlet_status_date ON cafe_feedback(outlet_id, status, created_at)",
             "CREATE INDEX IF NOT EXISTS idx_transaksi_header_outlet_date ON transaksi_header(outlet_id, created_at)",
             "CREATE INDEX IF NOT EXISTS idx_pembayaran_outlet_date ON pembayaran(outlet_id, paid_at)",
             "CREATE INDEX IF NOT EXISTS idx_processed_event_outlet_event ON processed_event(outlet_id, event_id)",
@@ -3036,12 +3322,16 @@ object ServerDatabase {
             FROM api_auth_session
             WHERE access_token = ?
               AND revoked_at IS NULL
-              AND datetime(expires_at) > datetime(?)
+              AND (
+                expires_at = ?
+                OR datetime(expires_at) > datetime(?)
+              )
             LIMIT 1
             """.trimIndent()
         ).use { statement ->
             statement.setString(1, accessToken)
-            statement.setString(2, now)
+            statement.setString(2, API_SESSION_NEVER_EXPIRES_AT)
+            statement.setString(3, now)
             statement.executeQuery().use { rs ->
                 if (!rs.next()) return null
                 val role = rs.getString("role").orEmpty().trim().uppercase()
@@ -3404,6 +3694,47 @@ object ServerDatabase {
             .replace(Regex("\\s+"), " ")
             .trim()
             .take(MAX_CATALOG_NAME_LENGTH)
+    }
+
+    private fun normalizeContactValue(value: String?): String? {
+        val normalized = value.orEmpty()
+            .trim()
+            .take(120)
+            .filter { ch -> ch.code in 32..126 }
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        return normalized.ifBlank { null }
+    }
+
+    private fun normalizeFeedbackSubject(value: String?): String? {
+        val normalized = value.orEmpty()
+            .trim()
+            .take(80)
+            .filter { ch -> ch.code in 32..126 }
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        return normalized.ifBlank { null }
+    }
+
+    private fun normalizeFeedbackMessage(value: String?): String {
+        val raw = value.orEmpty()
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .take(1000)
+        val asciiOnly = buildString {
+            raw.forEach { ch ->
+                when {
+                    ch == '\n' -> append('\n')
+                    ch == '\t' -> append(' ')
+                    ch.code in 32..126 -> append(ch)
+                    ch.isWhitespace() -> append(' ')
+                }
+            }
+        }
+        return asciiOnly
+            .replace(Regex("[ ]+"), " ")
+            .replace(Regex("\\n{3,}"), "\n\n")
+            .trim()
     }
 
     private fun normalizeCatalogNameOrNull(value: String?): String? {

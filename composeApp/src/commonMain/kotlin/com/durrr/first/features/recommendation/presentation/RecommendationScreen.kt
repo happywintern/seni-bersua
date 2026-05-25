@@ -240,6 +240,57 @@ fun RecommendationScreen(
             .associate { it.id to it.name }
     }
 
+    fun ensureRecommendationMenuItemsFromDrafts() {
+        val outletId = currentOutletId()
+        val existingById = menuRepository.getItems(outletId).associateBy { it.id }
+
+        if (bundles.isNotEmpty()) {
+            upsertRecommendationGroup(BUNDLE_GROUP_ID, BUNDLE_GROUP_NAME)
+            bundles.forEach { draft ->
+                val menuItemId = bundleMenuItemId(draft.id)
+                val existing = existingById[menuItemId]
+                menuRepository.upsertItem(
+                    Item(
+                        id = menuItemId,
+                        name = CatalogNameRules.normalizeOrFallback(draft.name, fallback = "Bundle"),
+                        price = draft.price.coerceAtLeast(0L),
+                        groupId = BUNDLE_GROUP_ID,
+                        code = existing?.code ?: "BND-${draft.id.takeLast(6).uppercase()}",
+                        imageUrl = draft.imageUrl?.trim()?.ifBlank { null } ?: existing?.imageUrl,
+                        isActive = true,
+                        outletId = outletId,
+                    ),
+                    outletId = outletId,
+                )
+            }
+        }
+
+        if (promos.isNotEmpty()) {
+            upsertRecommendationGroup(PROMO_GROUP_ID, PROMO_GROUP_NAME)
+            promos.forEach { draft ->
+                val menuItemId = promoMenuItemId(draft.id)
+                val existing = existingById[menuItemId]
+                val renderedName = CatalogNameRules.normalizeOrFallback(
+                    "${draft.name} (${draft.itemName} x${draft.qty.coerceAtLeast(1)})",
+                    fallback = draft.name,
+                )
+                menuRepository.upsertItem(
+                    Item(
+                        id = menuItemId,
+                        name = renderedName,
+                        price = draft.promoPrice.coerceAtLeast(0L),
+                        groupId = PROMO_GROUP_ID,
+                        code = existing?.code ?: "PRM-${draft.id.takeLast(6).uppercase()}",
+                        imageUrl = existing?.imageUrl,
+                        isActive = true,
+                        outletId = outletId,
+                    ),
+                    outletId = outletId,
+                )
+            }
+        }
+    }
+
     fun resetBundleEditor() {
         editingBundleId = null
         bundleName = ""
@@ -340,6 +391,7 @@ fun RecommendationScreen(
 
     LaunchedEffect(Unit) {
         hydrateRecommendationDraftsFromSettings()
+        ensureRecommendationMenuItemsFromDrafts()
         refreshMenu()
         syncDraftsWithMenu()
         persistRecommendationDrafts()

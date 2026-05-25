@@ -134,6 +134,8 @@ fun PosScreen(
             paid = effectivePaid,
         )
     }
+    val isCashPaidTooLow = paymentMethod == PosPaymentMethod.TUNAI &&
+        effectivePaid < totals.grandTotal
 
     LazyColumn(
         modifier = Modifier.padding(Dimens.md),
@@ -261,6 +263,12 @@ fun PosScreen(
                             label = "Tunai Dibayar",
                             value = paid,
                             onValueChange = { paid = it },
+                            isError = isCashPaidTooLow,
+                            errorText = if (isCashPaidTooLow) {
+                                "Minimal ${formatRupiah(totals.grandTotal)}"
+                            } else {
+                                null
+                            },
                             modifier = Modifier.fillMaxWidth(),
                         )
                     } else {
@@ -326,8 +334,13 @@ fun PosScreen(
                         ) { Text("Preview Receipt") }
                         Button(
                             modifier = Modifier.weight(1f),
+                            enabled = !isCashPaidTooLow,
                             onClick = {
                                 if (cartItems.isEmpty()) return@Button
+                                if (paymentMethod == PosPaymentMethod.TUNAI && effectivePaid < totals.grandTotal) {
+                                    syncMessage = "Tunai dibayar tidak boleh kurang dari Grand Total (${formatRupiah(totals.grandTotal)})."
+                                    return@Button
+                                }
                                 val transaksiId = IdGenerator.newId("trx_")
                                 val createdAt = nowIso()
                                 val transaksi = Transaksi(
@@ -472,19 +485,34 @@ private fun AmountField(
     label: String,
     value: String,
     onValueChange: (String) -> Unit,
+    isError: Boolean = false,
+    errorText: String? = null,
     modifier: Modifier = Modifier,
 ) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = { raw ->
-            onValueChange(raw.filter(Char::isDigit).take(12))
-        },
-        label = { Text(label) },
-        prefix = { Text("Rp") },
-        singleLine = true,
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+    Column(
         modifier = modifier,
-    )
+        verticalArrangement = Arrangement.spacedBy(Dimens.xs),
+    ) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = { raw ->
+                onValueChange(raw.filter(Char::isDigit).take(12))
+            },
+            label = { Text(label) },
+            prefix = { Text("Rp") },
+            singleLine = true,
+            isError = isError,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (!errorText.isNullOrBlank()) {
+            Text(
+                text = errorText,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+    }
 }
 
 @Composable

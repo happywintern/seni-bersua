@@ -65,6 +65,7 @@ fun Application.module() {
     ServerDatabase.init()
     log.info(BackblazeMenuImageStorage.configurationSummary())
     val reservationLimiter = reservationRateLimiter
+    val feedbackLimiter = feedbackRateLimiter
     install(ContentNegotiation) {
         json(Json {
             prettyPrint = true
@@ -121,6 +122,14 @@ fun Application.module() {
         log.info(
             "Reservation rate limiter enabled: maxRequests=${reservationLimiter.maxRequests}, " +
                 "windowSeconds=${reservationLimiter.windowSeconds}"
+        )
+    }
+    if (feedbackLimiter == null) {
+        log.info("Feedback rate limiter disabled.")
+    } else {
+        log.info(
+            "Feedback rate limiter enabled: maxRequests=${feedbackLimiter.maxRequests}, " +
+                "windowSeconds=${feedbackLimiter.windowSeconds}"
         )
     }
 
@@ -1123,6 +1132,110 @@ fun Application.module() {
                 }
             }
 
+            post("/feedback") {
+                feedbackLimiter?.let { limiter ->
+                    val decision = limiter.tryAcquire(key = call.rateLimitKey("feedback"))
+                    if (!decision.allowed) {
+                        call.response.headers.append(
+                            HttpHeaders.RetryAfter,
+                            decision.retryAfterSeconds.toString(),
+                        )
+                        call.respondApiError(
+                            status = HttpStatusCode.TooManyRequests,
+                            message = "Too many feedback requests",
+                            error = "Please retry in ${decision.retryAfterSeconds} second(s).",
+                        )
+                        return@post
+                    }
+                }
+                val request = call.receiveApiRequest<CreateFeedbackRequest>()
+                val scopedOutletId = call.requireScopedOutletId(
+                    rawOutletId = request.resolvedOutletId(),
+                    source = "outlet_id",
+                ) ?: return@post
+                if (!call.ensureActiveOutlet(scopedOutletId)) return@post
+                val feedback = ServerDatabase.createFeedback(
+                    request = request.copy(
+                        outletId = scopedOutletId,
+                        outletIdCamel = scopedOutletId,
+                    ),
+                    sourceIp = call.extractClientIpAddress(),
+                )
+                if (feedback == null) {
+                    call.respondApiError(
+                        status = HttpStatusCode.BadRequest,
+                        message = "Feedback creation failed",
+                        error = "Invalid feedback request",
+                    )
+                } else {
+                    call.respondApiSuccess(
+                        data = feedback,
+                        message = "Feedback created",
+                        status = HttpStatusCode.Created,
+                    )
+                }
+            }
+
+            get("/feedback") {
+                val outletId = call.requireScopedOutletId(
+                    rawOutletId = call.request.queryParameters["outlet"],
+                    source = "outlet query parameter",
+                ) ?: return@get
+                if (!call.ensureActiveOutlet(outletId)) return@get
+                if (!call.requireApiRoleForOutlet(outletId, "OWNER", "CASHIER")) return@get
+                val statuses = call.request.queryParameters["status"]
+                    ?.split(",")
+                    ?.map { it.trim() }
+                    ?.filter { it.isNotBlank() }
+                    ?.toSet()
+                    ?: emptySet()
+                val limit = call.request.queryParameters["limit"]
+                    ?.toIntOrNull()
+                    ?.coerceIn(1, 200)
+                    ?: 100
+                call.respondApiSuccess(
+                    data = ServerDatabase.listFeedback(
+                        statuses = statuses,
+                        outletId = outletId,
+                        limit = limit,
+                    ),
+                    message = "Feedback fetched",
+                )
+            }
+
+            post("/feedback/{id}/status") {
+                val feedbackId = call.parameters["id"].orEmpty()
+                if (feedbackId.isBlank()) {
+                    call.respondApiError(
+                        status = HttpStatusCode.BadRequest,
+                        message = "Feedback status update failed",
+                        error = "Missing feedback id",
+                    )
+                    return@post
+                }
+                val request = call.receiveApiRequest<UpdateFeedbackStatusRequest>()
+                val scopedOutletId = call.requireScopedOutletId(
+                    rawOutletId = request.outletId,
+                    source = "outlet_id",
+                ) ?: return@post
+                if (!call.ensureActiveOutlet(scopedOutletId)) return@post
+                if (!call.requireApiRoleForOutlet(scopedOutletId, "OWNER", "CASHIER")) return@post
+                val updated = ServerDatabase.updateFeedbackStatus(
+                    feedbackId = feedbackId,
+                    status = request.status,
+                    outletId = scopedOutletId,
+                )
+                if (updated == null) {
+                    call.respondApiError(
+                        status = HttpStatusCode.BadRequest,
+                        message = "Feedback status update failed",
+                        error = "Invalid feedback status or feedback not found",
+                    )
+                } else {
+                    call.respondApiSuccess(data = updated, message = "Feedback status updated")
+                }
+            }
+
             post("/orders/{id}/status") {
                 val orderId = call.parameters["id"].orEmpty()
                 val body = call.receiveApiRequest<UpdateOrderStatusRequest>()
@@ -1874,7 +1987,7 @@ private val reservationRateLimiter: FixedWindowIpRateLimiter? by lazy {
     )
 }
 
-private fun ApplicationCall.rateLimitKeyForReservation(): String {
+private fun ApplicationCall.extractClientIpAddress(): String {
     val xForwardedFor = request.headers["X-Forwarded-For"]
         ?.substringBefore(',')
         ?.trim()
@@ -1895,5 +2008,36 @@ private fun ApplicationCall.rateLimitKeyForReservation(): String {
         ?: forwarded?.takeIf { it.isNotBlank() }
         ?: requestHost?.takeIf { it.isNotBlank() }
         ?: "unknown"
+    return ip
+}
+
+private fun ApplicationCall.rateLimitKey(prefix: String): String {
+    val safePrefix = prefix.trim().lowercase().ifBlank { "request" }
+    val ip = extractClientIpAddress()
+    return "$safePrefix:$ip"
+}
+
+private fun ApplicationCall.rateLimitKeyForReservation(): String {
+    val ip = extractClientIpAddress()
     return "reservation:$ip"
+}
+
+private val feedbackRateLimiter: FixedWindowIpRateLimiter? by lazy {
+    val enabled = EnvConfig.get("SUCASH_FEEDBACK_RATE_LIMIT_ENABLED", "true")
+        .orEmpty()
+        .trim()
+        .let { raw -> raw.equals("true", ignoreCase = true) || raw == "1" }
+    if (!enabled) return@lazy null
+
+    val maxRequests = EnvConfig
+        .getInt("SUCASH_FEEDBACK_RATE_LIMIT_MAX_REQUESTS", 4)
+        .coerceAtLeast(1)
+    val windowSeconds = EnvConfig
+        .getInt("SUCASH_FEEDBACK_RATE_LIMIT_WINDOW_SECONDS", 60)
+        .coerceAtLeast(1)
+
+    FixedWindowIpRateLimiter(
+        maxRequests = maxRequests,
+        windowSeconds = windowSeconds,
+    )
 }

@@ -623,12 +623,12 @@ fun SettingsScreen(
             ) {
                 Text("Cash Flow")
             }
-            Button(
-                onClick = onOpenStock,
-                modifier = Modifier.weight(1f),
-            ) {
-                Text("Stock")
-            }
+//            Button(
+//                onClick = onOpenStock,
+//                modifier = Modifier.weight(1f),
+//            ) {
+//                Text("Stock")
+//            }
             Button(
                 onClick = onOpenCashClosing,
                 modifier = Modifier.weight(1f),

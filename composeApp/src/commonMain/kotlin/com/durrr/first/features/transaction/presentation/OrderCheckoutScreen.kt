@@ -161,6 +161,8 @@ fun OrderCheckoutScreen(
             paid = effectivePaidAmount,
         )
     }
+    val isCashPaidTooLow = paymentMethod == CheckoutPaymentMethod.TUNAI &&
+        effectivePaidAmount < totals.grandTotal
 
     fun serverBaseUrl(): String? = settingsRepository.getOptionalServerBaseUrl()
 
@@ -318,6 +320,8 @@ fun OrderCheckoutScreen(
                         paymentMethod = paymentMethod,
                         paid = paid,
                         effectivePaidAmount = effectivePaidAmount,
+                        isCashPaidTooLow = isCashPaidTooLow,
+                        minimumCashPaid = totals.grandTotal,
                         totals = totals,
                         processing = processing,
                         onPaymentMethodChange = { paymentMethod = it },
@@ -370,6 +374,10 @@ fun OrderCheckoutScreen(
                         },
                         onCheckout = {
                             if (processing) return@CheckoutPaymentPane
+                            if (paymentMethod == CheckoutPaymentMethod.TUNAI && effectivePaidAmount < totals.grandTotal) {
+                                syncMessage = "Tunai dibayar tidak boleh kurang dari Grand Total (${formatRupiah(totals.grandTotal)})."
+                                return@CheckoutPaymentPane
+                            }
                             val currentDraft = draft ?: return@CheckoutPaymentPane
                             scope.launch {
                                 processing = true
@@ -538,6 +546,8 @@ fun OrderCheckoutScreen(
                             paymentMethod = paymentMethod,
                             paid = paid,
                             effectivePaidAmount = effectivePaidAmount,
+                            isCashPaidTooLow = isCashPaidTooLow,
+                            minimumCashPaid = totals.grandTotal,
                             totals = totals,
                             processing = processing,
                             onPaymentMethodChange = { paymentMethod = it },
@@ -590,6 +600,10 @@ fun OrderCheckoutScreen(
                             },
                             onCheckout = {
                                 if (processing) return@CheckoutPaymentPane
+                                if (paymentMethod == CheckoutPaymentMethod.TUNAI && effectivePaidAmount < totals.grandTotal) {
+                                    syncMessage = "Tunai dibayar tidak boleh kurang dari Grand Total (${formatRupiah(totals.grandTotal)})."
+                                    return@CheckoutPaymentPane
+                                }
                                 val currentDraft = draft ?: return@CheckoutPaymentPane
                                 scope.launch {
                                     processing = true
@@ -904,6 +918,8 @@ private fun CheckoutPaymentPane(
     paymentMethod: CheckoutPaymentMethod,
     paid: String,
     effectivePaidAmount: Long,
+    isCashPaidTooLow: Boolean,
+    minimumCashPaid: Long,
     totals: TotalsCalculator.Result,
     processing: Boolean,
     onPaymentMethodChange: (CheckoutPaymentMethod) -> Unit,
@@ -913,7 +929,7 @@ private fun CheckoutPaymentPane(
     onCheckout: () -> Unit,
     onBackToOrders: () -> Unit,
     modifier: Modifier = Modifier,
-    ) {
+) {
     Column(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(Dimens.md),
@@ -961,7 +977,17 @@ private fun CheckoutPaymentPane(
             AppInfoLine("Service ($servicePercent%)", formatRupiah(serviceChargeValue))
             AppInfoLine("Rounding (Auto)", formatRupiah(roundingValue))
             if (paymentMethod == CheckoutPaymentMethod.TUNAI) {
-                AmountField("Tunai Dibayar", paid, onPaidChange)
+                AmountField(
+                    label = "Tunai Dibayar",
+                    value = paid,
+                    onValueChange = onPaidChange,
+                    isError = isCashPaidTooLow,
+                    errorText = if (isCashPaidTooLow) {
+                        "Minimal ${formatRupiah(minimumCashPaid)}"
+                    } else {
+                        null
+                    },
+                )
             } else {
                 AppInfoLine("Pembayaran QRIS", formatRupiah(effectivePaidAmount))
             }
@@ -978,6 +1004,7 @@ private fun CheckoutPaymentPane(
                 }
                 Button(
                     onClick = onCheckout,
+                    enabled = !processing && !isCashPaidTooLow,
                     modifier = Modifier.weight(1f),
                 ) {
                     Text(
@@ -1005,19 +1032,31 @@ private fun AmountField(
     label: String,
     value: String,
     onValueChange: (String) -> Unit,
+    isError: Boolean = false,
+    errorText: String? = null,
 ) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = { raw ->
-            onValueChange(raw.filter(Char::isDigit).take(12))
-        },
-        label = { Text(label) },
-        prefix = { Text("Rp") },
-        singleLine = true,
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-        modifier = Modifier.fillMaxWidth(),
-        textStyle = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
-    )
+    Column(verticalArrangement = Arrangement.spacedBy(Dimens.xs)) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = { raw ->
+                onValueChange(raw.filter(Char::isDigit).take(12))
+            },
+            label = { Text(label) },
+            prefix = { Text("Rp") },
+            singleLine = true,
+            isError = isError,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth(),
+            textStyle = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+        )
+        if (!errorText.isNullOrBlank()) {
+            Text(
+                text = errorText,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+    }
 }
 
 private data class RecommendationDiscountResult(
@@ -1274,6 +1313,8 @@ fun OrderCheckoutScreenPreview() {
                 paymentMethod = CheckoutPaymentMethod.TUNAI,
                 paid = "50000",
                 effectivePaidAmount = 50000,
+                isCashPaidTooLow = false,
+                minimumCashPaid = totals.grandTotal,
                 totals = totals,
                 processing = false,
                 onPaymentMethodChange = {},

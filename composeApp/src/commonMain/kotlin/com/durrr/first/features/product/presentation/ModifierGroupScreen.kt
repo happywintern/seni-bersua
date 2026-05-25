@@ -35,6 +35,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.durrr.first.core.utils.formatNumber
 import com.durrr.first.data.repo.MenuRepository
 import com.durrr.first.data.repo.SettingsRepository
 import com.durrr.first.data.repo.CatalogNameRules
@@ -46,6 +47,25 @@ import com.durrr.first.ui.design.AppTheme
 
 private val ModifierBlue = Color(0xFF273BBF)
 private val ModifierBorder = Color(0xFFD5D9E2)
+private const val MODIFIER_PRICE_MAX_DIGITS = 12
+private const val MODIFIER_PRICE_MAX_VALUE = 999_999_999_999L
+
+private fun normalizeModifierPriceInput(value: String): String {
+    return value.filter(Char::isDigit).take(MODIFIER_PRICE_MAX_DIGITS)
+}
+
+private fun formatModifierPriceInput(raw: String): String {
+    val digits = raw.filter(Char::isDigit)
+    if (digits.isBlank()) return ""
+    return formatNumber(digits.toLongOrNull() ?: 0L)
+}
+
+private fun parseModifierPriceInput(raw: String): Long? {
+    val digits = raw.filter(Char::isDigit)
+    if (digits.length > MODIFIER_PRICE_MAX_DIGITS) return null
+    if (digits.isBlank()) return 0L
+    return digits.toLongOrNull()
+}
 
 private data class ModifierOptionDraft(
     val name: String = "",
@@ -119,11 +139,15 @@ fun ModifierGroupScreen(
 
         val groupId = editingId ?: IdGenerator.newId("modgrp_")
         val options = validOptions.mapIndexed { index, draft ->
+            val parsedPrice = parseModifierPriceInput(draft.price) ?: run {
+                statusMessage = "Harga opsi modifier maksimal ${formatNumber(MODIFIER_PRICE_MAX_VALUE)} (12 digit)."
+                return
+            }
             ModifierOption(
                 id = IdGenerator.newId("modopt_"),
                 groupId = groupId,
                 name = draft.name,
-                priceDelta = draft.price.toLongOrNull() ?: 0L,
+                priceDelta = parsedPrice,
                 order = index + 1,
                 isDefault = index == 0 && selectionType == "SINGLE",
                 outletId = currentOutletId(),
@@ -300,12 +324,13 @@ private fun ModifierGroupContent(
                                     singleLine = true
                                 )
                                 OutlinedTextField(
-                                    value = draft.price,
-                                    onValueChange = { onUpdateOption(index, draft.copy(price = it)) },
+                                    value = formatModifierPriceInput(draft.price),
+                                    onValueChange = { onUpdateOption(index, draft.copy(price = normalizeModifierPriceInput(it))) },
                                     label = { Text("Harga") },
                                     modifier = Modifier.weight(1f),
                                     singleLine = true,
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    supportingText = { Text("Maks 12 digit") },
                                 )
                                 if (optionsDrafts.size > 1) {
                                     IconButton(onClick = { onRemoveOption(index) }) {
