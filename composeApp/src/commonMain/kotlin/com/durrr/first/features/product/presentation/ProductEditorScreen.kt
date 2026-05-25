@@ -44,6 +44,7 @@ import com.durrr.first.core.utils.formatNumber
 import com.durrr.first.data.repo.MenuRepository
 import com.durrr.first.data.repo.MenuSyncRepository
 import com.durrr.first.data.repo.SettingsRepository
+import com.durrr.first.data.repo.CatalogNameRules
 import com.durrr.first.domain.model.GroupItem
 import com.durrr.first.domain.model.Item
 import com.durrr.first.domain.model.ModifierGroupBundle
@@ -114,8 +115,7 @@ fun ProductEditorScreen(
     var statusMessage by remember { mutableStateOf<String?>(null) }
 
     fun currentOutletId(): String {
-        return settingsRepository.getValue(SettingsRepository.KEY_OUTLET_ID)
-            .ifBlank { SettingsRepository.DEFAULT_OUTLET_ID }
+        return settingsRepository.resolveOutletId()
     }
 
     fun serverBaseUrl(): String? = settingsRepository.getOptionalServerBaseUrl()
@@ -148,10 +148,10 @@ fun ProductEditorScreen(
     }
 
     fun save() {
-        val name = itemName.trim()
+        val name = CatalogNameRules.normalize(itemName)
         val price = parseCurrencyInput(itemPrice)
         if (name.isBlank()) {
-            statusMessage = "Nama barang wajib diisi."
+            statusMessage = "Nama barang wajib ASCII terbaca (maks ${CatalogNameRules.MAX_LENGTH} karakter)."
             return
         }
         if (price == null || price < 0L) {
@@ -211,7 +211,6 @@ fun ProductEditorScreen(
         itemPrice = itemPrice,
         onItemPriceChange = { itemPrice = normalizeCurrencyInput(it) },
         itemImageUrl = itemImageUrl,
-        onItemImageUrlChange = { itemImageUrl = it },
         onPickImage = {
             pickImage { uri ->
                 if (!uri.isNullOrBlank()) {
@@ -219,6 +218,7 @@ fun ProductEditorScreen(
                 }
             }
         },
+        onClearImage = { itemImageUrl = "" },
         itemActive = itemActive,
         onItemActiveChange = { itemActive = it },
         selectedModifierGroupIds = selectedModifierGroupIds,
@@ -253,8 +253,8 @@ private fun ProductEditorContent(
     itemPrice: String,
     onItemPriceChange: (String) -> Unit,
     itemImageUrl: String,
-    onItemImageUrlChange: (String) -> Unit,
     onPickImage: () -> Unit,
+    onClearImage: () -> Unit,
     itemActive: Boolean,
     onItemActiveChange: (Boolean) -> Unit,
     selectedModifierGroupIds: Set<String>,
@@ -314,21 +314,54 @@ private fun ProductEditorContent(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.fillMaxWidth(),
             )
-            OutlinedTextField(
-                value = itemImageUrl,
-                onValueChange = onItemImageUrlChange,
-                label = { Text("URL Foto Produk") },
-                supportingText = { Text("Opsional. Tempel URL gambar (https://...) untuk foto produk.") },
-                modifier = Modifier.fillMaxWidth(),
+            Text(
+                text = "Foto Produk",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
             )
-            Button(
-                onClick = onPickImage,
+            Text(
+                text = "Gunakan gambar dari galeri (lebih cepat daripada URL).",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFF666666),
+            )
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = FigmaBlue),
-                border = androidx.compose.foundation.BorderStroke(1.dp, FigmaBorder),
-                elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Text("Pilih Foto dari Galeri")
+                Button(
+                    onClick = onPickImage,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = FigmaBlue),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, FigmaBorder),
+                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp),
+                ) {
+                    Text(if (itemImageUrl.isBlank()) "Pilih Foto dari Galeri" else "Ganti Foto")
+                }
+                if (itemImageUrl.isNotBlank()) {
+                    Button(
+                        onClick = onClearImage,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color.White,
+                            contentColor = Color(0xFFB42318),
+                        ),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, FigmaBorder),
+                        elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp),
+                    ) {
+                        Text("Hapus Foto")
+                    }
+                }
+            }
+            if (itemImageUrl.isNotBlank()) {
+                Text(
+                    text = if (itemImageUrl.startsWith("http", ignoreCase = true)) {
+                        "Sumber: URL"
+                    } else {
+                        "Sumber: Galeri device"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFF666666),
+                )
             }
             ProductImageBanner(
                 imageUrl = itemImageUrl,
@@ -510,8 +543,8 @@ private fun ProductEditorScreenPreview() {
             itemPrice = itemPrice,
             onItemPriceChange = { itemPrice = it },
             itemImageUrl = itemImageUrl,
-            onItemImageUrlChange = { itemImageUrl = it },
             onPickImage = {},
+            onClearImage = { itemImageUrl = "" },
             itemActive = itemActive,
             onItemActiveChange = { itemActive = it },
             selectedModifierGroupIds = setOf("mod1"),

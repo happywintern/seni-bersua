@@ -51,9 +51,7 @@ fun CashClosingScreen(
     val scope = rememberCoroutineScope()
 
     fun currentOutletId(): String {
-        return settingsRepository
-            .getValue(SettingsRepository.KEY_OUTLET_ID)
-            .ifBlank { SettingsRepository.DEFAULT_OUTLET_ID }
+        return settingsRepository.resolveOutletId()
     }
 
     fun refresh() {

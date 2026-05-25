@@ -22,6 +22,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
+import com.durrr.first.core.utils.formatReadableDateTime
 import com.durrr.first.data.repo.MenuRepository
 import com.durrr.first.data.repo.SettingsRepository
 import com.durrr.first.data.repo.StockRepository
@@ -56,9 +57,7 @@ fun StockScreen(
     val scope = rememberCoroutineScope()
 
     fun currentOutletId(): String {
-        return settingsRepository
-            .getValue(SettingsRepository.KEY_OUTLET_ID)
-            .ifBlank { SettingsRepository.DEFAULT_OUTLET_ID }
+        return settingsRepository.resolveOutletId()
     }
 
     fun allowNegativeStock(): Boolean {
@@ -241,7 +240,7 @@ fun StockScreen(
                             style = MaterialTheme.typography.titleMedium,
                         )
                         Text("Item: ${entry.itemId}")
-                        Text("At: ${entry.createdAt}")
+                        Text("At: ${formatReadableDateTime(entry.createdAt)}")
                         if (!entry.referenceId.isNullOrBlank()) {
                             Text("Ref: ${entry.referenceType ?: "-"} / ${entry.referenceId}")
                         }
@@ -297,7 +296,7 @@ private fun StockScreenPreview() {
                     Column(verticalArrangement = Arrangement.spacedBy(Dimens.xxs)) {
                         Text("${entry.movementType.name} ${entry.qtyDelta}", style = MaterialTheme.typography.titleMedium)
                         Text("Item: ${entry.itemId}")
-                        Text("At: ${entry.createdAt}")
+                        Text("At: ${formatReadableDateTime(entry.createdAt)}")
                         Text("Reason: ${entry.reason ?: "-"}")
                     }
                 }

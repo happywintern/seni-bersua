@@ -5,8 +5,10 @@ const search = new URLSearchParams(window.location.search);
 const tableMatch = path.match(/^\/t\/([^/]+)$/);
 const isTablePage = Boolean(tableMatch);
 const isDashboardPage = path === "/dashboard";
+const isAdminPage = path === "/admin";
 const tableUuid = tableMatch ? tableMatch[1] : "";
 const initialOutletId = search.get("outlet") || "default";
+const NEVER_PAIRING_EXPIRY = "9999-12-31T23:59:59Z";
 const idNumberFormatter = new Intl.NumberFormat("id-ID", {
   maximumFractionDigits: 0,
 });
@@ -22,6 +24,18 @@ function formatNumber(value) {
 
 function formatRp(value) {
   return `Rp ${formatNumber(value)}`;
+}
+
+function formatDateTimeReadable(value) {
+  if (!value || typeof value !== "string") return "-";
+  const match = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})(?:[Tt\s](\d{2}):(\d{2}))?/);
+  if (!match) return value;
+  const [, year, month, day, hour, minute] = match;
+  const shortYear = year.slice(-2);
+  if (hour && minute) {
+    return `${day}-${month}-${shortYear} ${hour}:${minute}`;
+  }
+  return `${day}-${month}-${shortYear}`;
 }
 
 function todayIsoDate() {
@@ -71,9 +85,17 @@ function createCatalogModel(raw) {
 }
 
 async function api(path, options = {}) {
+  const { bearerToken, headers: customHeaders, ...restOptions } = options;
+  const headers = {
+    "Content-Type": "application/json",
+    ...(customHeaders || {}),
+  };
+  if (typeof bearerToken === "string" && bearerToken.trim().length > 0) {
+    headers.Authorization = `Bearer ${bearerToken.trim()}`;
+  }
   const response = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
+    headers,
+    ...restOptions,
   });
   const contentType = response.headers.get("content-type") || "";
   const isJson = contentType.includes("application/json");
@@ -108,7 +130,7 @@ function HomePage() {
   async function refreshTables() {
     setLoading(true);
     try {
-      const data = await api("/api/tables");
+      const data = await api(`/api/tables?outlet=${encodeURIComponent(initialOutletId)}`);
       setTables(Array.isArray(data) ? data : []);
       setMessage("");
     } catch (error) {
@@ -129,7 +151,7 @@ function HomePage() {
       const seeded = await api("/api/tables/seed", {
         method: "POST",
         body: JSON.stringify({
-          data: { count: 10, outlet_id: "default" },
+          data: { count: 10, outlet_id: initialOutletId },
           message: "Seed 10 tables",
           error: null,
         }),
@@ -151,6 +173,7 @@ function HomePage() {
         <div className="subtext">Total table target: {formatNumber(tables.length)}</div>
         <div className="hero-links">
           <a href="/dashboard" className="btn">Open Cashier Dashboard</a>
+          <a href="/admin" className="btn">Open Server Admin</a>
           <button className="btn" onClick={seedTables} disabled={seeding}>
             {seeding ? "Seeding..." : "Generate 10 Tables"}
           </button>
@@ -171,8 +194,14 @@ function HomePage() {
                 <div>
                   <strong>{table.name}</strong>
                   <div className="subtext">{table.uuid}</div>
+                  <div className="subtext">Outlet: {table.outletId || table.outlet_id || initialOutletId}</div>
                 </div>
-                <a className="btn btn-primary" href={`/t/${table.uuid}`}>Open Order</a>
+                <a
+                  className="btn btn-primary"
+                  href={`/t/${table.uuid}?outlet=${encodeURIComponent(table.outletId || table.outlet_id || initialOutletId)}`}
+                >
+                  Open Order
+                </a>
               </li>
             ))}
           </ul>
@@ -195,12 +224,20 @@ function TableOrderingPage() {
   const [busy, setBusy] = useState(false);
   const [confirmVisible, setConfirmVisible] = useState(false);
   const [customizeState, setCustomizeState] = useState(null);
+  const hasQuery = query.trim().length > 0;
 
   async function loadAll() {
     try {
+      let scopedOutletId = outletId;
+      const resolvedScope = await api(`/api/tables/${tableUuid}/outlet`);
+      const resolvedOutletId = resolvedScope?.outletId || resolvedScope?.outlet_id;
+      if (resolvedOutletId && resolvedOutletId !== outletId) {
+        scopedOutletId = resolvedOutletId;
+        setOutletId(resolvedOutletId);
+      }
       const [tableData, catalogData] = await Promise.all([
-        api(`/api/tables/${tableUuid}`),
-        api(`/api/menu/catalog?outlet=${encodeURIComponent(outletId)}`),
+        api(`/api/tables/${tableUuid}?outlet=${encodeURIComponent(scopedOutletId)}`),
+        api(`/api/menu/catalog?outlet=${encodeURIComponent(scopedOutletId)}`),
       ]);
       setTable(tableData);
       setCatalog(createCatalogModel(catalogData));
@@ -519,14 +556,12 @@ function TableOrderingPage() {
     <main className="container table-container">
       <section className="table-shell">
         <header className="table-header">
-          <button className="icon-btn" onClick={() => setShowCart(false)} aria-label="Back to menu">←</button>
           <input
             className="search-input"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Cari Menu"
           />
-          <button className="chip-btn chip-muted" type="button">Filter</button>
           <button className="icon-btn" type="button" onClick={loadAll} aria-label="Refresh">↻</button>
           <button className="icon-btn cart-btn" type="button" onClick={() => setShowCart((prev) => !prev)} aria-label="Open cart">
             🛒
@@ -550,8 +585,12 @@ function TableOrderingPage() {
           <section className="product-grid">
             {filteredItems.length === 0 ? (
               <div className="empty-state">
-                <strong>Belum ada menu tersinkron</strong>
-                <p className="subtext">Push menu dari mobile lalu tekan refresh.</p>
+                <strong>{hasQuery ? "Menu Tidak Ditemukan" : "Menu Belum Tersedia"}</strong>
+                <p className="subtext">
+                  {hasQuery
+                    ? "Maaf, menu yang Anda cari tidak tersedia. Silakan periksa kembali kata kunci pencarian Anda."
+                    : "Maaf, menu untuk outlet ini belum tersedia. Silakan coba lagi beberapa saat."}
+                </p>
               </div>
             ) : filteredItems.map((item) => {
               const qty = qtyForItem(item.id);
@@ -642,6 +681,9 @@ function TableOrderingPage() {
               <button className="btn btn-primary btn-fill" disabled={busy || cart.length === 0} onClick={() => setConfirmVisible(true)}>
                 {busy ? "Memproses..." : "Buat Pesanan"}
               </button>
+              {cart.length === 0 ? (
+                <p className="subtext">Pilih minimal 1 item dulu untuk membuat pesanan.</p>
+              ) : null}
             </section>
           </section>
         )}
@@ -697,8 +739,10 @@ function TableOrderingPage() {
       {confirmVisible ? (
         <div className="modal-overlay" onClick={() => setConfirmVisible(false)}>
           <div className="confirm-card" onClick={(event) => event.stopPropagation()}>
-            <button className="icon-btn confirm-close" onClick={() => setConfirmVisible(false)}>✕</button>
             <h3>Apakah sudah benar pesanan yang dibuat?</h3>
+            <p className="confirm-description">
+              Pesanan yang sudah diproses dan dibayar tidak dapat diubah atau dibatalkan. Lanjutkan?
+            </p>
             <div className="actions confirm-actions">
               <button className="btn chip-muted" onClick={() => setConfirmVisible(false)}>Tidak</button>
               <button className="btn btn-primary" onClick={checkout}>Ya</button>
@@ -720,6 +764,7 @@ function DashboardPage() {
   const [useCustomDate, setUseCustomDate] = useState(false);
   const [outletId, setOutletId] = useState(initialOutletId);
   const [message, setMessage] = useState("");
+  const [doneConfirmOrderId, setDoneConfirmOrderId] = useState(null);
 
   async function loadOrders() {
     try {
@@ -949,6 +994,9 @@ function DashboardPage() {
                   <span className={`status status-${order.status.toLowerCase()}`}>{order.status}</span>
                 </div>
                 <div className="subtext">Order ID: {order.id}</div>
+                <div className="subtext">
+                  Waktu: {formatDateTimeReadable(order.createdAt || order.created_at || order.updatedAt || order.updated_at)}
+                </div>
                 {order.note ? <div className="subtext">Note: {order.note}</div> : null}
                 <div className="subtext">
                   Payment Confirmation: {paymentConfirmationLabel(order.paymentConfirmation)}
@@ -972,7 +1020,7 @@ function DashboardPage() {
                   <button className="btn btn-small" onClick={() => setStatus(order.id, "ACCEPTED")}>Accept</button>
                   <button className="btn btn-small" onClick={() => setStatus(order.id, "PREPARING")}>Preparing</button>
                   <button className="btn btn-small" onClick={() => setStatus(order.id, "SERVED")}>Served</button>
-                  <button className="btn btn-small" onClick={() => setStatus(order.id, "DONE")}>Done</button>
+                  <button className="btn btn-small" onClick={() => setDoneConfirmOrderId(order.id)}>Done</button>
                 </div>
               </li>
             ))}
@@ -980,11 +1028,411 @@ function DashboardPage() {
         )}
         {message ? <p className="message">{message}</p> : null}
       </section>
+
+      {doneConfirmOrderId ? (
+        <div className="modal-overlay" onClick={() => setDoneConfirmOrderId(null)}>
+          <div className="confirm-card" onClick={(event) => event.stopPropagation()}>
+            <h3>Selesaikan pesanan ini?</h3>
+            <p className="confirm-description">
+              Setelah status menjadi Done, pesanan dianggap selesai dan tidak bisa kembali ke status sebelumnya.
+            </p>
+            <div className="actions confirm-actions">
+              <button className="btn chip-muted" onClick={() => setDoneConfirmOrderId(null)}>Batal</button>
+              <button
+                className="btn btn-primary"
+                onClick={async () => {
+                  const targetOrderId = doneConfirmOrderId;
+                  setDoneConfirmOrderId(null);
+                  await setStatus(targetOrderId, "DONE");
+                }}
+              >
+                Ya, Done
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </main>
+  );
+}
+
+function AdminPage() {
+  const [outletId, setOutletId] = useState(initialOutletId);
+  const [outlets, setOutlets] = useState([]);
+  const [tables, setTables] = useState([]);
+  const [tablesLoading, setTablesLoading] = useState(false);
+  const [tablesMessage, setTablesMessage] = useState("");
+  const [tableSeedCount, setTableSeedCount] = useState(10);
+  const [tableSeedBusy, setTableSeedBusy] = useState(false);
+  const [newOutletId, setNewOutletId] = useState("");
+  const [newOutletName, setNewOutletName] = useState("");
+  const [newOutletActive, setNewOutletActive] = useState(true);
+  const [pairingCode, setPairingCode] = useState("");
+  const [pairingExpiry, setPairingExpiry] = useState("");
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function loadOutlets() {
+    setBusy(true);
+    setMessage("");
+    try {
+      const data = await api("/api/outlets");
+      setOutlets(Array.isArray(data) ? data : []);
+      setMessage("Outlet list updated.");
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function loadTablesByOutlet(targetOutletId = outletId) {
+    const scopedOutletId = (targetOutletId || "").trim() || "default";
+    setTablesLoading(true);
+    setTablesMessage("");
+    try {
+      const data = await api(`/api/tables?outlet=${encodeURIComponent(scopedOutletId)}`);
+      setTables(Array.isArray(data) ? data : []);
+    } catch (error) {
+      setTables([]);
+      setTablesMessage(error.message);
+    } finally {
+      setTablesLoading(false);
+    }
+  }
+
+  async function seedTablesForOutlet(targetOutletId = outletId) {
+    const scopedOutletId = (targetOutletId || "").trim() || "default";
+    const normalizedCount = Number(tableSeedCount);
+    if (!Number.isFinite(normalizedCount) || normalizedCount <= 0) {
+      setTablesMessage("Jumlah table harus lebih dari 0.");
+      return;
+    }
+    setTableSeedBusy(true);
+    setTablesMessage("");
+    try {
+      const seeded = await api("/api/tables/seed", {
+        method: "POST",
+        body: JSON.stringify({
+          data: {
+            outlet_id: scopedOutletId,
+            count: Math.floor(normalizedCount),
+          },
+          message: "Web admin tables seed",
+          error: null,
+        }),
+      });
+      setTables(Array.isArray(seeded) ? seeded : []);
+      setTablesMessage(`Berhasil generate ${Array.isArray(seeded) ? seeded.length : 0} table untuk outlet ${scopedOutletId}.`);
+    } catch (error) {
+      setTablesMessage(error.message);
+    } finally {
+      setTableSeedBusy(false);
+    }
+  }
+
+  async function upsertOutlet() {
+    const normalizedId = newOutletId.trim();
+    const normalizedName = newOutletName.trim();
+    if (!normalizedId || !normalizedName) {
+      setMessage("Outlet ID and Outlet Name are required.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const saved = await api("/api/outlets/upsert", {
+        method: "POST",
+        body: JSON.stringify({
+          data: {
+            outlet_id: normalizedId,
+            name: normalizedName,
+            active: newOutletActive,
+          },
+          message: "Web admin outlet upsert",
+          error: null,
+        }),
+      });
+      setOutletId(saved?.outletId || saved?.outlet_id || normalizedId);
+      setNewOutletId("");
+      setNewOutletName("");
+      await loadOutlets();
+      await loadTablesByOutlet(saved?.outletId || saved?.outlet_id || normalizedId);
+      setMessage(`Outlet ${saved?.outletId || saved?.outlet_id || normalizedId} saved.`);
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function setOutletStatus(targetOutletId, active) {
+    setBusy(true);
+    setMessage("");
+    try {
+      await api(`/api/outlets/${encodeURIComponent(targetOutletId)}/status`, {
+        method: "POST",
+        body: JSON.stringify({
+          data: {
+            outlet_id: targetOutletId,
+            active,
+          },
+          message: "Web admin outlet status update",
+          error: null,
+        }),
+      });
+      await loadOutlets();
+      await loadTablesByOutlet(targetOutletId);
+      setMessage(`Outlet ${targetOutletId} is now ${active ? "active" : "inactive"}.`);
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function createPairingCode() {
+    setBusy(true);
+    setMessage("");
+    try {
+      const generated = await api("/api/auth/pairing/create", {
+        method: "POST",
+        body: JSON.stringify({
+          data: {
+            role: "OWNER",
+            outlet_id: outletId,
+            ttl_seconds: 0,
+          },
+          message: "Web admin pairing code create",
+          error: null,
+        }),
+      });
+      setPairingCode(generated?.pairingCode || generated?.pairing_code || "");
+      setPairingExpiry(generated?.expiresAt || generated?.expires_at || "");
+      setMessage("Owner pairing code ready. This code is one-time and stays valid until redeemed.");
+    } catch (error) {
+      setMessage(error.message);
+      setPairingCode("");
+      setPairingExpiry("");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function copyPairingCode() {
+    if (!pairingCode) return;
+    if (navigator?.clipboard?.writeText) {
+      navigator.clipboard.writeText(pairingCode);
+      setMessage("Pairing code copied.");
+    }
+  }
+
+  useEffect(() => {
+    loadOutlets();
+    loadTablesByOutlet(outletId);
+  }, []);
+
+  useEffect(() => {
+    loadTablesByOutlet(outletId);
+  }, [outletId]);
+
+  return (
+    <main className="container">
+      <section className="hero dashboard-hero">
+        <div className="section-header">
+          <div>
+            <h1>Server Admin</h1>
+            <p>Provision outlet dan generate pairing code tanpa perlu terminal command.</p>
+          </div>
+          <div className="actions">
+            <a href="/" className="btn">Home</a>
+            <a href="/dashboard" className="btn">Dashboard</a>
+          </div>
+        </div>
+        <div className="insight-card">
+          <div className="insight-label">Quick Onboarding</div>
+          <p>1) Create/activate outlet. 2) Generate owner pairing code. 3) Redeem pairing code from mobile.</p>
+        </div>
+      </section>
+
+      <section className="card">
+        <h2>Step 1 · Outlet Provisioning</h2>
+        <label className="label">Outlet Scope</label>
+        <input
+          className="input"
+          value={outletId}
+          onChange={(event) => setOutletId(event.target.value || "default")}
+          placeholder="default"
+        />
+        <div className="actions">
+          <button className="btn" onClick={loadOutlets} disabled={busy}>Refresh Outlets</button>
+          <button
+            className="btn"
+            onClick={() => loadTablesByOutlet(outletId)}
+            disabled={tablesLoading}
+          >
+            {tablesLoading ? "Loading Tables..." : "Refresh Tables"}
+          </button>
+        </div>
+        <div className="filter-grid">
+          <div className="field-block">
+            <label className="label">Outlet ID</label>
+            <input
+              className="input"
+              value={newOutletId}
+              onChange={(event) => setNewOutletId(event.target.value)}
+              placeholder="main-branch"
+            />
+          </div>
+          <div className="field-block">
+            <label className="label">Outlet Name</label>
+            <input
+              className="input"
+              value={newOutletName}
+              onChange={(event) => setNewOutletName(event.target.value)}
+              placeholder="Main Branch"
+            />
+          </div>
+        </div>
+        <label className="toggle-row">
+          <input
+            type="checkbox"
+            checked={newOutletActive}
+            onChange={(event) => setNewOutletActive(event.target.checked)}
+          />
+          <span>Set active immediately</span>
+        </label>
+        <div className="actions">
+          <button className="btn btn-primary" onClick={upsertOutlet} disabled={busy}>Save Outlet</button>
+        </div>
+
+        <div className="list" style={{ marginTop: "14px" }}>
+          {outlets.length === 0 ? (
+            <div className="subtext">No outlets loaded yet.</div>
+          ) : (
+            outlets.map((outlet) => {
+              const id = outlet.outletId || outlet.outlet_id;
+              const isActive = Boolean(outlet.active);
+              return (
+                <div key={id} className="table-row">
+                  <div className="list-row">
+                    <div>
+                      <strong>{outlet.name}</strong>
+                      <div className="subtext">{id}</div>
+                    </div>
+                    <span className={`status ${isActive ? "status-accepted" : "status-cancelled"}`}>
+                      {isActive ? "ACTIVE" : "INACTIVE"}
+                    </span>
+                  </div>
+                  <div className="actions">
+                    <button className="btn btn-small" onClick={() => setOutletId(id)}>Use Outlet</button>
+                    {isActive ? (
+                      <button className="btn btn-small" onClick={() => setOutletStatus(id, false)}>Deactivate</button>
+                    ) : (
+                      <button className="btn btn-small" onClick={() => setOutletStatus(id, true)}>Activate</button>
+                    )}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </section>
+
+      <section className="card">
+        <h2>Step 2 · Tables by Outlet</h2>
+        <p className="subtext">Daftar tabel mengikuti Outlet Scope yang dipilih di atas.</p>
+        <div className="filter-grid" style={{ marginTop: "10px" }}>
+          <div className="field-block">
+            <label className="label">Jumlah Table</label>
+            <input
+              className="input"
+              type="number"
+              min="1"
+              max="500"
+              value={tableSeedCount}
+              onChange={(event) => setTableSeedCount(event.target.value)}
+              placeholder="10"
+            />
+          </div>
+        </div>
+        <div className="actions">
+          <button
+            className="btn btn-primary"
+            onClick={() => seedTablesForOutlet(outletId)}
+            disabled={tableSeedBusy}
+          >
+            {tableSeedBusy ? "Generating..." : "Generate Tables for Outlet"}
+          </button>
+        </div>
+        <div className="list" style={{ marginTop: "12px" }}>
+          {tablesLoading ? (
+            <div className="subtext">Loading tables...</div>
+          ) : tables.length === 0 ? (
+            <div className="subtext">No tables found for outlet: {(outletId || "").trim() || "default"}.</div>
+          ) : (
+            tables.map((table) => (
+              <div key={table.uuid} className="table-row">
+                <div className="list-row">
+                  <div>
+                    <strong>{table.name}</strong>
+                    <div className="subtext">{table.uuid}</div>
+                    <div className="subtext">Outlet: {table.outletId || table.outlet_id || outletId}</div>
+                  </div>
+                  <a
+                    className="btn btn-small"
+                    href={`/t/${table.uuid}?outlet=${encodeURIComponent(table.outletId || table.outlet_id || outletId)}`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Open QR
+                  </a>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+        {tablesMessage ? <p className="message">{tablesMessage}</p> : null}
+      </section>
+
+      <section className="card">
+        <h2>Step 3 · Pairing Code Generation</h2>
+        <p className="subtext">Pairing code dipakai untuk setup awal owner di mobile. Mobile hanya redeem, tidak generate.</p>
+        <div className="filter-grid">
+          <div className="field-block">
+            <label className="label">Target Outlet</label>
+            <input
+              className="input"
+              value={outletId}
+              onChange={(event) => setOutletId(event.target.value || "default")}
+              placeholder="default"
+            />
+          </div>
+        </div>
+        <p className="subtext">Role otomatis OWNER. TTL otomatis lifetime (sampai code ditebus sekali).</p>
+        <div className="actions">
+          <button className="btn btn-primary" onClick={createPairingCode} disabled={busy}>Generate Pairing Code</button>
+        </div>
+        {pairingCode ? (
+          <div className="pairing-box">
+            <div className="subtext">Code</div>
+            <div className="pairing-code">{pairingCode}</div>
+            <div className="subtext">
+              Expires: {pairingExpiry === NEVER_PAIRING_EXPIRY ? "Never (until redeemed)" : (pairingExpiry || "-")}
+            </div>
+            <div className="actions">
+              <button className="btn btn-small" onClick={copyPairingCode}>Copy</button>
+            </div>
+          </div>
+        ) : null}
+        {message ? <p className="message">{message}</p> : null}
+      </section>
     </main>
   );
 }
 
 function App() {
+  if (isAdminPage) return <AdminPage />;
   if (isDashboardPage) return <DashboardPage />;
   if (isTablePage) return <TableOrderingPage />;
   return <HomePage />;

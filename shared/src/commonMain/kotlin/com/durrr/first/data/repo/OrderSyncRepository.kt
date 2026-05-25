@@ -6,6 +6,7 @@ import com.durrr.first.domain.model.OrderStatus
 import com.durrr.first.network.ServerApiClient
 import com.durrr.first.network.dto.ServerOrderDto
 import com.durrr.first.network.dto.ServerOrderStatus
+import com.durrr.first.network.dto.ServerReservationStatus
 import kotlin.math.max
 
 class OrderSyncRepository(
@@ -21,7 +22,19 @@ class OrderSyncRepository(
         val warning: String? = null,
     )
 
+    data class ReservationSyncSummary(
+        val total: Int,
+        val pending: Int,
+    )
+
     suspend fun pullOrders(baseUrl: String, outletId: String? = null): Int {
+        val scopedOutletId = outletId.orEmpty().ifBlank { SettingsRepository.DEFAULT_OUTLET_ID }
+        val bearerToken = settingsRepository?.getActiveUserServerApiBearerToken(scopedOutletId)
+            ?.trim()
+            .orEmpty()
+        if (settingsRepository != null && bearerToken.isBlank()) {
+            error("Session server belum aktif. Pairing server dulu lalu login ulang.")
+        }
         val remoteOrders = apiClient.fetchOrders(
             baseUrl = baseUrl,
             statuses = listOf(
@@ -31,7 +44,8 @@ class OrderSyncRepository(
                 ServerOrderStatus.SERVED,
                 ServerOrderStatus.DONE,
             ),
-            outletId = outletId,
+            outletId = scopedOutletId,
+            bearerToken = bearerToken.ifBlank { null },
         )
         remoteOrders.forEach(::cacheRemoteOrder)
         return remoteOrders.size
@@ -83,15 +97,15 @@ class OrderSyncRepository(
             )
         }
 
-        val bearerToken = settingsRepository?.getActiveUserServerApiBearerToken()
+        val bearerToken = settingsRepository?.getActiveUserServerApiBearerToken(scopedOutletId)
         if (bearerToken.isNullOrBlank()) {
             return UpdateStatusResult(
                 localSaved = localSaved,
                 remoteSynced = false,
                 warning = if (localSaved) {
-                    "Status tersimpan lokal. Isi Server API Shared Secret dan login ulang untuk sync server."
+                    "Status tersimpan lokal. Pairing server lalu login ulang untuk sync server."
                 } else {
-                    "Aksi order butuh auth. Isi Server API Shared Secret lalu login ulang dengan PIN aktif."
+                    "Aksi order butuh auth. Pairing server dulu lalu login ulang dengan PIN aktif."
                 },
             )
         }
@@ -131,6 +145,32 @@ class OrderSyncRepository(
                     },
                 )
             },
+        )
+    }
+
+    suspend fun fetchReservationSummary(
+        baseUrl: String,
+        outletId: String? = null,
+    ): ReservationSyncSummary? {
+        val scopedOutletId = outletId.orEmpty().ifBlank { SettingsRepository.DEFAULT_OUTLET_ID }
+        val bearerToken = settingsRepository?.getActiveUserServerApiBearerToken(scopedOutletId)
+            ?.trim()
+            .orEmpty()
+            .ifBlank { return null }
+        val reservations = apiClient.fetchReservations(
+            baseUrl = baseUrl,
+            statuses = listOf(
+                ServerReservationStatus.PENDING,
+                ServerReservationStatus.CONFIRMED,
+                ServerReservationStatus.SEATED,
+            ),
+            outletId = scopedOutletId,
+            bearerToken = bearerToken,
+        )
+        val pendingCount = reservations.count { it.status.equals("PENDING", ignoreCase = true) }
+        return ReservationSyncSummary(
+            total = reservations.size,
+            pending = pendingCount,
         )
     }
 

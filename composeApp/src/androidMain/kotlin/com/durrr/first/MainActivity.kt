@@ -1,9 +1,14 @@
 package com.durrr.first
 
 import android.app.DatePickerDialog
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.util.Log
+import android.print.PrintAttributes
+import android.print.PrintManager
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -15,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -24,6 +30,7 @@ import com.durrr.first.ui.design.AppTheme
 import java.io.File
 import java.util.Calendar
 import java.util.Locale
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private var defaultExceptionHandler: Thread.UncaughtExceptionHandler? = null
@@ -67,6 +74,10 @@ class MainActivity : ComponentActivity() {
                 imagePickerLauncher.launch(arrayOf("image/*"))
             }, onPickDate = { initialIso, onPicked ->
                 launchDatePicker(initialIso = initialIso, onPicked = onPicked)
+            }, onShareText = { subject, payload ->
+                shareTextPayload(subject, payload)
+            }, onPrintHtml = { jobName, htmlPayload ->
+                printHtmlPayload(jobName, htmlPayload)
             })
         }
     }
@@ -127,6 +138,36 @@ class MainActivity : ComponentActivity() {
                 ?: run { throw throwable }
         }
     }
+
+    private fun shareTextPayload(subject: String, payload: String) {
+        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, subject)
+            putExtra(Intent.EXTRA_TEXT, payload)
+        }
+        startActivity(Intent.createChooser(sendIntent, subject))
+    }
+
+    private fun printHtmlPayload(jobName: String, htmlPayload: String) {
+        val printManager = getSystemService(Context.PRINT_SERVICE) as? PrintManager
+        if (printManager == null) {
+            shareTextPayload(jobName, htmlPayload)
+            return
+        }
+        val webView = WebView(this)
+        webView.settings.javaScriptEnabled = false
+        webView.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView?, url: String?) {
+                val adapter = webView.createPrintDocumentAdapter(jobName)
+                printManager.print(
+                    jobName,
+                    adapter,
+                    PrintAttributes.Builder().build(),
+                )
+            }
+        }
+        webView.loadDataWithBaseURL(null, htmlPayload, "text/HTML", "UTF-8", null)
+    }
 }
 
 @Composable
@@ -135,13 +176,18 @@ private fun AndroidAppContent(
     onLaunchScanner: () -> Unit,
     onPickImage: ((String?) -> Unit) -> Unit,
     onPickDate: (initialIso: String?, onPicked: (String) -> Unit) -> Unit,
+    onShareText: (subject: String, payload: String) -> Unit,
+    onPrintHtml: (jobName: String, htmlPayload: String) -> Unit,
 ) {
     val dependencies = rememberAppDependencies(
         context = LocalContext.current,
         launchScanner = onLaunchScanner,
         pickImage = onPickImage,
         pickDate = onPickDate,
+        shareText = onShareText,
+        printHtml = onPrintHtml,
     )
+    val scope = rememberCoroutineScope()
     var localSetupComplete by remember {
         mutableStateOf(dependencies.settingsRepository.isLocalSetupComplete())
     }
@@ -165,11 +211,18 @@ private fun AndroidAppContent(
             } else if (!viewModel.loggedIn) {
                 MobileLoginScreen(
                     settingsRepository = dependencies.settingsRepository,
+                    serverAuthRepository = dependencies.serverAuthRepository,
                     onLoginSuccess = { viewModel.markLoggedIn() },
                     onRequireSetup = {
                         dependencies.settingsRepository.clearActiveUser()
                         viewModel.markLoggedOut()
                         localSetupComplete = false
+                    },
+                    onBackgroundInfo = { info ->
+                        viewModel.pushNotification(
+                            title = "Auth",
+                            message = info,
+                        )
                     },
                 )
             } else {
@@ -182,8 +235,23 @@ private fun AndroidAppContent(
                         localSetupComplete = false
                     },
                     onLogout = {
-                        dependencies.settingsRepository.clearActiveUser()
-                        viewModel.markLoggedOut()
+                        val configuredBaseUrl = dependencies.settingsRepository.getOptionalServerBaseUrl()
+                        if (configuredBaseUrl.isNullOrBlank()) {
+                            dependencies.settingsRepository.clearActiveUser()
+                            viewModel.markLoggedOut()
+                        } else {
+                            scope.launch {
+                                runCatching {
+                                    dependencies.serverAuthRepository.logoutActiveUserSession(
+                                        baseUrl = configuredBaseUrl,
+                                    )
+                                }.onFailure {
+                                    dependencies.settingsRepository.clearServerAuthSession()
+                                }
+                                dependencies.settingsRepository.clearActiveUser()
+                                viewModel.markLoggedOut()
+                            }
+                        }
                     },
                 )
             }

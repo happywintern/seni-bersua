@@ -5,6 +5,7 @@ data class PromoDraft(
     val name: String,
     val itemId: String,
     val itemName: String,
+    val qty: Int = 1,
     val discountPercent: Int,
     val promoPrice: Long,
     val startDate: String,

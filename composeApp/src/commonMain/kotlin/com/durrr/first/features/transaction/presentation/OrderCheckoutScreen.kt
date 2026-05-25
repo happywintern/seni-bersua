@@ -42,7 +42,11 @@ import com.durrr.first.domain.service.IdGenerator
 import com.durrr.first.domain.service.TotalsCalculator
 import com.durrr.first.features.cart.domain.OrderDraftLine
 import com.durrr.first.features.cart.domain.OrderDraftModifierSelection
+import com.durrr.first.features.cart.domain.OrderBuilderCartStore
 import com.durrr.first.features.cart.domain.OrderDraftStore
+import com.durrr.first.features.product.domain.BundleDraft
+import com.durrr.first.features.product.domain.BundleItemInput
+import com.durrr.first.features.recommendation.domain.PromoDraft
 import com.durrr.first.features.transaction.domain.ReceiptDraftStore
 import com.durrr.first.network.dto.PembayaranDto
 import com.durrr.first.network.dto.TransaksiDetailDto
@@ -56,6 +60,22 @@ import com.durrr.first.ui.design.AppStatusPill
 import com.durrr.first.ui.design.AppTheme
 import com.durrr.first.ui.design.Dimens
 import kotlinx.coroutines.launch
+import kotlin.math.min
+
+private const val KEY_RECOMMENDATION_BUNDLES = "recommendation_bundles_v1"
+private const val KEY_RECOMMENDATION_PROMOS = "recommendation_promos_v1"
+private const val RECORD_SEPARATOR = "\u001E"
+private const val FIELD_SEPARATOR = "\u001F"
+private const val ITEM_SEPARATOR = "\u001D"
+private const val ITEM_FIELD_SEPARATOR = "\u001C"
+
+private enum class CheckoutPaymentMethod(
+    val paymentTypeId: String,
+    val label: String,
+) {
+    TUNAI(paymentTypeId = "CASH", label = "Tunai"),
+    QRIS(paymentTypeId = "QRIS", label = "QRIS"),
+}
 
 @Composable
 fun OrderCheckoutScreen(
@@ -74,6 +94,7 @@ fun OrderCheckoutScreen(
     var servicePercent by remember { mutableStateOf(10L) }
     var roundingValue by remember { mutableStateOf(0L) }
     var paid by remember { mutableStateOf("0") }
+    var paymentMethod by remember { mutableStateOf(CheckoutPaymentMethod.TUNAI) }
     var syncMessage by remember { mutableStateOf<String?>(null) }
     var processing by remember { mutableStateOf(false) }
     var editingLineIndex by remember { mutableStateOf<Int?>(null) }
@@ -97,24 +118,54 @@ fun OrderCheckoutScreen(
     val lines = draft?.lines.orEmpty()
     val subtotal = lines.sumOf { it.qty * it.price }
     val discountValue = discountPlus.toLongOrNull() ?: 0L
-    val pricedBase = (subtotal - discountValue).coerceAtLeast(0L)
+    val recommendationDiscount = remember(lines) {
+        val bundles = decodeRecommendationBundles(
+            settingsRepository.getValue(KEY_RECOMMENDATION_BUNDLES),
+        )
+        val promos = decodeRecommendationPromos(
+            settingsRepository.getValue(KEY_RECOMMENDATION_PROMOS),
+        )
+        calculateRecommendationDiscount(
+            lines = lines,
+            bundles = bundles,
+            promos = promos,
+            referenceDate = nowIso().take(10),
+        )
+    }
+    val effectiveDiscountValue = (discountValue + recommendationDiscount.totalDiscount).coerceAtLeast(0L)
+    val pricedBase = (subtotal - effectiveDiscountValue).coerceAtLeast(0L)
     val taxValue = (pricedBase * taxPercent) / 100L
     val serviceChargeValue = (pricedBase * servicePercent) / 100L
-    val totals = totalsCalculator.calculate(
+    val manualPaidValue = paid.toLongOrNull() ?: 0L
+    val baseTotals = totalsCalculator.calculate(
         lines = lines.map { TotalsCalculator.Line(it.qty, it.price, 0) },
-        discountPlus = discountValue,
+        discountPlus = effectiveDiscountValue,
         tax = taxValue,
         serviceCharge = serviceChargeValue,
         rounding = roundingValue,
-        paid = paid.toLongOrNull() ?: 0L,
+        paid = manualPaidValue,
     )
+    val effectivePaidAmount = when (paymentMethod) {
+        CheckoutPaymentMethod.TUNAI -> manualPaidValue
+        CheckoutPaymentMethod.QRIS -> baseTotals.grandTotal
+    }
+    val totals = if (effectivePaidAmount == manualPaidValue) {
+        baseTotals
+    } else {
+        totalsCalculator.calculate(
+            lines = lines.map { TotalsCalculator.Line(it.qty, it.price, 0) },
+            discountPlus = effectiveDiscountValue,
+            tax = taxValue,
+            serviceCharge = serviceChargeValue,
+            rounding = roundingValue,
+            paid = effectivePaidAmount,
+        )
+    }
 
     fun serverBaseUrl(): String? = settingsRepository.getOptionalServerBaseUrl()
 
     fun currentOutletId(): String {
-        return settingsRepository
-            .getValue(SettingsRepository.KEY_OUTLET_ID)
-            .ifBlank { SettingsRepository.DEFAULT_OUTLET_ID }
+        return settingsRepository.resolveOutletId()
     }
 
     fun currentCashierId(): String = settingsRepository.resolveCurrentCashierId()
@@ -256,14 +307,20 @@ fun OrderCheckoutScreen(
                     CheckoutPaymentPane(
                         modifier = Modifier.weight(0.95f),
                         discountPlus = discountPlus,
+                        manualDiscountValue = discountValue,
+                        autoRecommendationDiscount = recommendationDiscount.totalDiscount,
+                        recommendationDiscountHint = recommendationDiscount.hint,
                         taxPercent = taxPercent,
                         taxValue = taxValue,
                         servicePercent = servicePercent,
                         serviceChargeValue = serviceChargeValue,
                         roundingValue = roundingValue,
+                        paymentMethod = paymentMethod,
                         paid = paid,
+                        effectivePaidAmount = effectivePaidAmount,
                         totals = totals,
                         processing = processing,
+                        onPaymentMethodChange = { paymentMethod = it },
                         onDiscountChange = { discountPlus = it },
                         onPaidChange = { paid = it },
                         onPreview = {
@@ -275,7 +332,7 @@ fun OrderCheckoutScreen(
                                 meja = draft?.tableToken,
                                 cashierId = currentCashierId(),
                                 cashierName = currentCashierName(),
-                                discountPlus = discountPlus.toLongOrNull() ?: 0L,
+                                discountPlus = effectiveDiscountValue,
                                 tax = taxValue,
                                 serviceCharge = serviceChargeValue,
                                 rounding = roundingValue,
@@ -298,9 +355,9 @@ fun OrderCheckoutScreen(
                                 id = IdGenerator.newId("pay_preview_"),
                                 transaksiId = previewId,
                                 paidAt = previewCreatedAt,
-                                amountPaid = paid.toLongOrNull() ?: 0L,
+                                amountPaid = effectivePaidAmount,
                                 change = totals.change,
-                                paymentTypeId = "CASH",
+                                paymentTypeId = paymentMethod.paymentTypeId,
                                 outletId = currentOutletId(),
                             )
                             ReceiptDraftStore.putDraft(
@@ -326,7 +383,7 @@ fun OrderCheckoutScreen(
                                         meja = currentDraft.tableToken,
                                         cashierId = currentCashierId(),
                                         cashierName = currentCashierName(),
-                                        discountPlus = discountPlus.toLongOrNull() ?: 0L,
+                                        discountPlus = effectiveDiscountValue,
                                         tax = taxValue,
                                         serviceCharge = serviceChargeValue,
                                         rounding = roundingValue,
@@ -354,9 +411,9 @@ fun OrderCheckoutScreen(
                                         id = IdGenerator.newId("pay_"),
                                         transaksiId = transaksiId,
                                         paidAt = createdAt,
-                                        amountPaid = paid.toLongOrNull() ?: 0L,
+                                        amountPaid = effectivePaidAmount,
                                         change = 0L,
-                                        paymentTypeId = "CASH",
+                                        paymentTypeId = paymentMethod.paymentTypeId,
                                         outletId = currentOutletId(),
                                     )
 
@@ -422,6 +479,7 @@ fun OrderCheckoutScreen(
                                     }
 
                                     OrderDraftStore.removeDraft(draftId)
+                                    OrderBuilderCartStore.clearSnapshot(currentOutletId())
                                     draft = null
                                     onPreviewReceipt(transaksiId)
                                 }.onFailure {
@@ -469,14 +527,20 @@ fun OrderCheckoutScreen(
                     item {
                         CheckoutPaymentPane(
                             discountPlus = discountPlus,
+                            manualDiscountValue = discountValue,
+                            autoRecommendationDiscount = recommendationDiscount.totalDiscount,
+                            recommendationDiscountHint = recommendationDiscount.hint,
                             taxPercent = taxPercent,
                             taxValue = taxValue,
                             servicePercent = servicePercent,
                             serviceChargeValue = serviceChargeValue,
                             roundingValue = roundingValue,
+                            paymentMethod = paymentMethod,
                             paid = paid,
+                            effectivePaidAmount = effectivePaidAmount,
                             totals = totals,
                             processing = processing,
+                            onPaymentMethodChange = { paymentMethod = it },
                             onDiscountChange = { discountPlus = it },
                             onPaidChange = { paid = it },
                             onPreview = {
@@ -488,7 +552,7 @@ fun OrderCheckoutScreen(
                                     meja = draft?.tableToken,
                                     cashierId = currentCashierId(),
                                     cashierName = currentCashierName(),
-                                    discountPlus = discountPlus.toLongOrNull() ?: 0L,
+                                    discountPlus = effectiveDiscountValue,
                                     tax = taxValue,
                                     serviceCharge = serviceChargeValue,
                                     rounding = roundingValue,
@@ -511,9 +575,9 @@ fun OrderCheckoutScreen(
                                     id = IdGenerator.newId("pay_preview_"),
                                     transaksiId = previewId,
                                     paidAt = previewCreatedAt,
-                                    amountPaid = paid.toLongOrNull() ?: 0L,
+                                    amountPaid = effectivePaidAmount,
                                     change = totals.change,
-                                    paymentTypeId = "CASH",
+                                    paymentTypeId = paymentMethod.paymentTypeId,
                                     outletId = currentOutletId(),
                                 )
                                 ReceiptDraftStore.putDraft(
@@ -539,7 +603,7 @@ fun OrderCheckoutScreen(
                                             meja = currentDraft.tableToken,
                                             cashierId = currentCashierId(),
                                             cashierName = currentCashierName(),
-                                            discountPlus = discountPlus.toLongOrNull() ?: 0L,
+                                            discountPlus = effectiveDiscountValue,
                                             tax = taxValue,
                                             serviceCharge = serviceChargeValue,
                                             rounding = roundingValue,
@@ -567,9 +631,9 @@ fun OrderCheckoutScreen(
                                             id = IdGenerator.newId("pay_"),
                                             transaksiId = transaksiId,
                                             paidAt = createdAt,
-                                            amountPaid = paid.toLongOrNull() ?: 0L,
+                                            amountPaid = effectivePaidAmount,
                                             change = 0L,
-                                            paymentTypeId = "CASH",
+                                            paymentTypeId = paymentMethod.paymentTypeId,
                                             outletId = currentOutletId(),
                                         )
 
@@ -635,6 +699,7 @@ fun OrderCheckoutScreen(
                                         }
 
                                         OrderDraftStore.removeDraft(draftId)
+                                        OrderBuilderCartStore.clearSnapshot(currentOutletId())
                                         draft = null
                                         onPreviewReceipt(transaksiId)
                                     }.onFailure {
@@ -828,32 +893,78 @@ private fun InlineModifierEditor(
 @Composable
 private fun CheckoutPaymentPane(
     discountPlus: String,
+    manualDiscountValue: Long,
+    autoRecommendationDiscount: Long,
+    recommendationDiscountHint: String?,
     taxPercent: Long,
     taxValue: Long,
     servicePercent: Long,
     serviceChargeValue: Long,
     roundingValue: Long,
+    paymentMethod: CheckoutPaymentMethod,
     paid: String,
+    effectivePaidAmount: Long,
     totals: TotalsCalculator.Result,
     processing: Boolean,
+    onPaymentMethodChange: (CheckoutPaymentMethod) -> Unit,
     onDiscountChange: (String) -> Unit,
     onPaidChange: (String) -> Unit,
     onPreview: () -> Unit,
     onCheckout: () -> Unit,
     onBackToOrders: () -> Unit,
     modifier: Modifier = Modifier,
-) {
+    ) {
     Column(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(Dimens.md),
     ) {
         AppCard {
-            AppSectionHeader("Payment Summary", "Cash confirmation for current order")
-            AmountField("Discount Plus", discountPlus, onDiscountChange)
+            AppSectionHeader("Payment Summary", "Pilih metode bayar: Tunai atau QRIS")
+            AmountField("Discount Manual", discountPlus, onDiscountChange)
+            Row(horizontalArrangement = Arrangement.spacedBy(Dimens.xs)) {
+                OutlinedButton(
+                    onClick = { onPaymentMethodChange(CheckoutPaymentMethod.TUNAI) },
+                    enabled = !processing,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(
+                        "Tunai",
+                        fontWeight = if (paymentMethod == CheckoutPaymentMethod.TUNAI) FontWeight.Bold else FontWeight.Normal,
+                    )
+                }
+                OutlinedButton(
+                    onClick = { onPaymentMethodChange(CheckoutPaymentMethod.QRIS) },
+                    enabled = !processing,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(
+                        "QRIS",
+                        fontWeight = if (paymentMethod == CheckoutPaymentMethod.QRIS) FontWeight.Bold else FontWeight.Normal,
+                    )
+                }
+            }
+            if (autoRecommendationDiscount > 0L) {
+                AppInfoLine("Auto Bundle + Promo", "-${formatRupiah(autoRecommendationDiscount)}")
+                recommendationDiscountHint?.takeIf { it.isNotBlank() }?.let { hint ->
+                    Text(
+                        text = hint,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            AppInfoLine(
+                "Total Discount",
+                formatRupiah((manualDiscountValue + autoRecommendationDiscount).coerceAtLeast(0L)),
+            )
             AppInfoLine("Tax ($taxPercent%)", formatRupiah(taxValue))
             AppInfoLine("Service ($servicePercent%)", formatRupiah(serviceChargeValue))
             AppInfoLine("Rounding (Auto)", formatRupiah(roundingValue))
-            AmountField("Cash Paid", paid, onPaidChange)
+            if (paymentMethod == CheckoutPaymentMethod.TUNAI) {
+                AmountField("Tunai Dibayar", paid, onPaidChange)
+            } else {
+                AppInfoLine("Pembayaran QRIS", formatRupiah(effectivePaidAmount))
+            }
             AppInfoLine("Subtotal", formatRupiah(totals.subtotal))
             AppInfoLine("Grand Total", formatRupiah(totals.grandTotal), emphasized = true)
             AppInfoLine("Change", formatRupiah(totals.change), emphasized = true)
@@ -869,7 +980,13 @@ private fun CheckoutPaymentPane(
                     onClick = onCheckout,
                     modifier = Modifier.weight(1f),
                 ) {
-                    Text(if (processing) "Processing..." else "Checkout Cash")
+                    Text(
+                        if (processing) {
+                            "Processing..."
+                        } else {
+                            "Checkout ${paymentMethod.label}"
+                        }
+                    )
                 }
             }
             OutlinedButton(
@@ -891,7 +1008,9 @@ private fun AmountField(
 ) {
     OutlinedTextField(
         value = value,
-        onValueChange = onValueChange,
+        onValueChange = { raw ->
+            onValueChange(raw.filter(Char::isDigit).take(12))
+        },
         label = { Text(label) },
         prefix = { Text("Rp") },
         singleLine = true,
@@ -899,6 +1018,194 @@ private fun AmountField(
         modifier = Modifier.fillMaxWidth(),
         textStyle = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
     )
+}
+
+private data class RecommendationDiscountResult(
+    val totalDiscount: Long,
+    val hint: String?,
+)
+
+private data class BundleMatchResult(
+    val discount: Long,
+    val appliedBundleCount: Int,
+    val remainingQtyByItemId: Map<String, Long>,
+)
+
+private fun calculateRecommendationDiscount(
+    lines: List<OrderDraftLine>,
+    bundles: List<BundleDraft>,
+    promos: List<PromoDraft>,
+    referenceDate: String,
+): RecommendationDiscountResult {
+    if (lines.isEmpty()) {
+        return RecommendationDiscountResult(totalDiscount = 0L, hint = null)
+    }
+    val activeBundles = bundles.filter { isActiveRecommendationWindow(it.startDate, it.endDate, referenceDate) }
+    val activePromos = promos.filter { isActiveRecommendationWindow(it.startDate, it.endDate, referenceDate) }
+    if (activeBundles.isEmpty() && activePromos.isEmpty()) {
+        return RecommendationDiscountResult(totalDiscount = 0L, hint = null)
+    }
+
+    val availableQtyByItemId = lines.groupBy { it.itemId.orEmpty() }
+        .filterKeys { it.isNotBlank() }
+        .mapValues { (_, groupedLines) -> groupedLines.sumOf { it.qty.coerceAtLeast(0L) } }
+        .toMutableMap()
+    val basePriceByItemId = lines.asSequence()
+        .mapNotNull { line ->
+            val id = line.itemId ?: return@mapNotNull null
+            id to line.basePrice.coerceAtLeast(0L)
+        }
+        .groupBy({ it.first }, { it.second })
+        .mapValues { (_, prices) -> prices.minOrNull() ?: 0L }
+
+    val bundleMatch = applyBundleDiscounts(
+        bundles = activeBundles,
+        availableQtyByItemId = availableQtyByItemId,
+        basePriceByItemId = basePriceByItemId,
+    )
+
+    val bestPromoPriceByItemId = activePromos
+        .groupBy { it.itemId }
+        .mapValues { (_, candidatePromos) ->
+            candidatePromos.minOf { it.promoPrice.coerceAtLeast(0L) }
+        }
+
+    var appliedPromoCount = 0
+    var promoDiscount = 0L
+    bundleMatch.remainingQtyByItemId.forEach { (itemId, remainingQty) ->
+        if (remainingQty <= 0L) return@forEach
+        val promoPrice = bestPromoPriceByItemId[itemId] ?: return@forEach
+        val basePrice = basePriceByItemId[itemId] ?: return@forEach
+        if (basePrice <= promoPrice) return@forEach
+        appliedPromoCount += 1
+        promoDiscount += (basePrice - promoPrice) * remainingQty
+    }
+
+    val totalDiscount = (bundleMatch.discount + promoDiscount).coerceAtLeast(0L)
+    if (totalDiscount <= 0L) {
+        return RecommendationDiscountResult(totalDiscount = 0L, hint = null)
+    }
+    val hint = buildString {
+        val parts = mutableListOf<String>()
+        if (bundleMatch.appliedBundleCount > 0) {
+            parts += "Bundle x${bundleMatch.appliedBundleCount}"
+        }
+        if (appliedPromoCount > 0) {
+            parts += "Promo item $appliedPromoCount"
+        }
+        append(parts.joinToString(" • "))
+    }.ifBlank { null }
+    return RecommendationDiscountResult(
+        totalDiscount = totalDiscount,
+        hint = hint,
+    )
+}
+
+private fun applyBundleDiscounts(
+    bundles: List<BundleDraft>,
+    availableQtyByItemId: MutableMap<String, Long>,
+    basePriceByItemId: Map<String, Long>,
+): BundleMatchResult {
+    var totalDiscount = 0L
+    var appliedBundleCount = 0
+    val candidates = bundles.mapNotNull { bundle ->
+        if (bundle.items.isEmpty()) return@mapNotNull null
+        val basePerSet = bundle.items.sumOf { item ->
+            val price = basePriceByItemId[item.itemId] ?: 0L
+            price * item.qty.coerceAtLeast(1)
+        }
+        val discountPerSet = (basePerSet - bundle.price.coerceAtLeast(0L)).coerceAtLeast(0L)
+        if (discountPerSet <= 0L) return@mapNotNull null
+        bundle to discountPerSet
+    }.sortedByDescending { (_, discountPerSet) -> discountPerSet }
+
+    for ((bundle, discountPerSet) in candidates) {
+        var maxSetCount = Long.MAX_VALUE
+        for (item in bundle.items) {
+            val requiredQty = item.qty.coerceAtLeast(1).toLong()
+            val availableQty = availableQtyByItemId[item.itemId] ?: 0L
+            maxSetCount = min(maxSetCount, availableQty / requiredQty)
+        }
+        if (maxSetCount <= 0L || maxSetCount == Long.MAX_VALUE) continue
+
+        appliedBundleCount += maxSetCount.toInt()
+        totalDiscount += discountPerSet * maxSetCount
+        bundle.items.forEach { item ->
+            val requiredQty = item.qty.coerceAtLeast(1).toLong() * maxSetCount
+            val current = availableQtyByItemId[item.itemId] ?: 0L
+            availableQtyByItemId[item.itemId] = (current - requiredQty).coerceAtLeast(0L)
+        }
+    }
+    return BundleMatchResult(
+        discount = totalDiscount,
+        appliedBundleCount = appliedBundleCount,
+        remainingQtyByItemId = availableQtyByItemId.toMap(),
+    )
+}
+
+private fun isActiveRecommendationWindow(
+    startDate: String,
+    endDate: String,
+    referenceDate: String,
+): Boolean {
+    val start = startDate.trim()
+    val end = endDate.trim()
+    val ref = referenceDate.trim()
+    if (ref.length != 10) return true
+    if (start.length == 10 && ref < start) return false
+    if (end.length == 10 && ref > end) return false
+    return true
+}
+
+private fun decodeRecommendationBundles(raw: String): List<BundleDraft> {
+    if (raw.isBlank()) return emptyList()
+    return raw.split(RECORD_SEPARATOR)
+        .mapNotNull { row ->
+            val cols = row.split(FIELD_SEPARATOR)
+            if (cols.size < 5) return@mapNotNull null
+            val price = cols[4].toLongOrNull() ?: 0L
+            val items = cols.getOrNull(5).orEmpty()
+                .takeIf { it.isNotBlank() }
+                ?.split(ITEM_SEPARATOR)
+                ?.mapNotNull { encodedItem ->
+                    val itemCols = encodedItem.split(ITEM_FIELD_SEPARATOR)
+                    if (itemCols.size < 3) return@mapNotNull null
+                    BundleItemInput(
+                        itemId = itemCols[0],
+                        itemName = itemCols[1],
+                        qty = itemCols[2].toIntOrNull() ?: 1,
+                    )
+                }
+                .orEmpty()
+            BundleDraft(
+                id = cols[0],
+                name = cols[1],
+                startDate = cols[2],
+                endDate = cols[3],
+                price = price,
+                items = items,
+                imageUrl = cols.getOrNull(6)?.takeIf { it.isNotBlank() },
+            )
+        }
+}
+
+private fun decodeRecommendationPromos(raw: String): List<PromoDraft> {
+    if (raw.isBlank()) return emptyList()
+    return raw.split(RECORD_SEPARATOR)
+        .mapNotNull { row ->
+            val cols = row.split(FIELD_SEPARATOR)
+            if (cols.size < 8) return@mapNotNull null
+            PromoDraft(
+                id = cols[0],
+                name = cols[1],
+                itemId = cols[2],
+                itemName = cols[3],
+                discountPercent = cols[4].toIntOrNull() ?: 0,
+                promoPrice = cols[5].toLongOrNull() ?: 0L,
+                startDate = cols[6],
+                endDate = cols[7],
+            )
+        }
 }
 
 @Preview
@@ -956,14 +1263,20 @@ fun OrderCheckoutScreenPreview() {
             )
             CheckoutPaymentPane(
                 discountPlus = "0",
+                manualDiscountValue = 0,
+                autoRecommendationDiscount = 0,
+                recommendationDiscountHint = null,
                 taxPercent = 11,
                 taxValue = 4070,
                 servicePercent = 10,
                 serviceChargeValue = 3700,
                 roundingValue = 0,
+                paymentMethod = CheckoutPaymentMethod.TUNAI,
                 paid = "50000",
+                effectivePaidAmount = 50000,
                 totals = totals,
                 processing = false,
+                onPaymentMethodChange = {},
                 onDiscountChange = {},
                 onPaidChange = {},
                 onPreview = {},

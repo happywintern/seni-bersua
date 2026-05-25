@@ -59,7 +59,7 @@ fun RecapScreen(
     todayDate: () -> String,
     onNotify: (title: String, message: String, level: AppNotificationLevel) -> Unit = { _, _, _ -> },
     onOpenCashFlow: () -> Unit = {},
-    onOpenStock: () -> Unit = {},
+    // onOpenStock: () -> Unit = {},
     onOpenCashClosing: () -> Unit = {},
     onOpenTransactionHistory: () -> Unit = {},
 ) {
@@ -72,9 +72,7 @@ fun RecapScreen(
     var cashFlowSummary by remember { mutableStateOf<CashFlowSummary?>(null) }
 
     fun currentOutletId(): String {
-        return settingsRepository
-            .getValue(SettingsRepository.KEY_OUTLET_ID)
-            .ifBlank { SettingsRepository.DEFAULT_OUTLET_ID }
+        return settingsRepository.resolveOutletId()
     }
 
     suspend fun load() {
@@ -188,7 +186,7 @@ fun RecapScreen(
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             UtilityActionButton("Arus Kas", onOpenCashFlow)
-                            UtilityActionButton("Stok", onOpenStock)
+                            // UtilityActionButton("Stok", onOpenStock)
                             UtilityActionButton("Kas Closing", onOpenCashClosing)
                             UtilityActionButton("Riwayat Trx", onOpenTransactionHistory)
                         }
@@ -202,7 +200,7 @@ fun RecapScreen(
                             color = Color(0xFF6B7280),
                         )
                         UtilityActionButton("Arus Kas", onOpenCashFlow)
-                        UtilityActionButton("Stok", onOpenStock)
+                        // UtilityActionButton("Stok", onOpenStock)
                         UtilityActionButton("Kas Closing", onOpenCashClosing)
                         UtilityActionButton("Riwayat Trx", onOpenTransactionHistory)
                     }

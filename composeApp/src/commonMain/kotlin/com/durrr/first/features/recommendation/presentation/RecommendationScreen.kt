@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -39,6 +40,7 @@ import com.durrr.first.core.utils.formatRupiah
 import com.durrr.first.data.repo.MenuRepository
 import com.durrr.first.data.repo.MenuSyncRepository
 import com.durrr.first.data.repo.SettingsRepository
+import com.durrr.first.data.repo.CatalogNameRules
 import com.durrr.first.domain.model.GroupItem
 import com.durrr.first.domain.model.Item
 import com.durrr.first.domain.service.IdGenerator
@@ -52,6 +54,7 @@ import com.durrr.first.ui.design.AppEmptyState
 import com.durrr.first.ui.design.AppInfoLine
 import com.durrr.first.ui.design.AppSectionHeader
 import com.durrr.first.ui.design.AppStatusPill
+import com.durrr.first.ui.media.ProductImageBanner
 import kotlinx.coroutines.launch
 
 private enum class RecommendationTab(val title: String) {
@@ -77,6 +80,7 @@ fun RecommendationScreen(
     settingsRepository: SettingsRepository,
     menuSyncRepository: MenuSyncRepository,
     pickDate: (initialIso: String?, onPicked: (String) -> Unit) -> Unit = { _, _ -> },
+    pickImage: ((String?) -> Unit) -> Unit = { onPicked -> onPicked(null) },
 ) {
     val bundles = BundleStore.bundles
     val promos = PromoStore.promos
@@ -88,6 +92,7 @@ fun RecommendationScreen(
 
     var bundleName by remember { mutableStateOf("") }
     var bundlePrice by remember { mutableStateOf("") }
+    var bundleImageUrl by remember { mutableStateOf("") }
     var bundleStartDate by remember { mutableStateOf("") }
     var bundleEndDate by remember { mutableStateOf("") }
     var editingBundleId by remember { mutableStateOf<String?>(null) }
@@ -95,14 +100,13 @@ fun RecommendationScreen(
 
     var promoName by remember { mutableStateOf("") }
     var promoProductId by remember { mutableStateOf<String?>(null) }
+    var promoQty by remember { mutableStateOf("1") }
     var promoPrice by remember { mutableStateOf("") }
     var promoDiscountPercent by remember { mutableStateOf("") }
     var promoStartDate by remember { mutableStateOf("") }
     var promoEndDate by remember { mutableStateOf("") }
 
-    fun currentOutletId(): String = settingsRepository
-        .getValue(SettingsRepository.KEY_OUTLET_ID)
-        .ifBlank { SettingsRepository.DEFAULT_OUTLET_ID }
+    fun currentOutletId(): String = settingsRepository.resolveOutletId()
 
     fun persistRecommendationDrafts() {
         settingsRepository.upsert(KEY_RECOMMENDATION_BUNDLES, encodeBundles(bundles))
@@ -139,7 +143,11 @@ fun RecommendationScreen(
             val existing = existingBundleById[bundleId]
                 ?: existingBundleByName[normalizeNameKey(item.name)]
             if (existing != null) {
-                existing.copy(name = item.name, price = item.price)
+                existing.copy(
+                    name = item.name,
+                    price = item.price,
+                    imageUrl = item.imageUrl ?: existing.imageUrl,
+                )
             } else {
                 BundleDraft(
                     id = bundleId,
@@ -148,6 +156,7 @@ fun RecommendationScreen(
                     endDate = "",
                     price = item.price,
                     items = emptyList(),
+                    imageUrl = item.imageUrl,
                 )
             }
         }
@@ -163,17 +172,18 @@ fun RecommendationScreen(
             val existing = existingPromoById[promoId]
                 ?: existingPromoByName[normalizeNameKey(item.name)]
             if (existing != null) {
-                existing.copy(name = item.name, promoPrice = item.price)
+                existing.copy(name = item.name, promoPrice = item.price, qty = existing.qty.coerceAtLeast(1))
             } else {
                 PromoDraft(
                     id = promoId,
                     name = item.name,
                     itemId = item.id,
                     itemName = item.name,
-                    discountPercent = 0,
+                    discountPercent = existing?.discountPercent ?: 0,
+                    qty = existing?.qty ?: 1,
                     promoPrice = item.price,
-                    startDate = "",
-                    endDate = "",
+                    startDate = existing?.startDate.orEmpty(),
+                    endDate = existing?.endDate.orEmpty(),
                 )
             }
         }
@@ -234,6 +244,7 @@ fun RecommendationScreen(
         editingBundleId = null
         bundleName = ""
         bundlePrice = ""
+        bundleImageUrl = ""
         bundleStartDate = ""
         bundleEndDate = ""
         selectedBundleQty.clear()
@@ -243,6 +254,7 @@ fun RecommendationScreen(
         editingBundleId = bundle.id
         bundleName = bundle.name
         bundlePrice = bundle.price.toString()
+        bundleImageUrl = bundle.imageUrl.orEmpty()
         bundleStartDate = bundle.startDate
         bundleEndDate = bundle.endDate
         selectedBundleQty.clear()
@@ -399,11 +411,20 @@ fun RecommendationScreen(
                         selectedQty = selectedBundleQty,
                         bundleName = bundleName,
                         bundlePrice = bundlePrice,
+                        bundleImageUrl = bundleImageUrl,
                         bundleStartDate = bundleStartDate,
                         bundleEndDate = bundleEndDate,
                         isEditing = editingBundleId != null,
                         onBundleNameChange = { bundleName = it },
                         onBundlePriceChange = { bundlePrice = normalizeCurrencyInput(it) },
+                        onPickBundleImage = {
+                            pickImage { picked ->
+                                if (!picked.isNullOrBlank()) {
+                                    bundleImageUrl = picked
+                                }
+                            }
+                        },
+                        onClearBundleImage = { bundleImageUrl = "" },
                         onPickBundleStartDate = {
                             pickDate(bundleStartDate.takeIf { it.isNotBlank() }) { picked ->
                                 bundleStartDate = picked
@@ -434,11 +455,11 @@ fun RecommendationScreen(
                             selectedBundleQty[itemId] = (current + 1).coerceAtMost(99)
                         },
                         onSave = {
-                            val name = bundleName.trim()
+                            val name = CatalogNameRules.normalize(bundleName)
                             val price = parseCurrencyInput(bundlePrice)
                             val selected = selectedBundleQty.filterValues { it > 0 }
                             if (name.isBlank()) {
-                                message = "Nama bundle wajib diisi."
+                                message = "Nama bundle wajib ASCII terbaca (maks ${CatalogNameRules.MAX_LENGTH} karakter)."
                                 return@BundleEditorCard
                             }
                             if (price <= 0L) {
@@ -468,6 +489,7 @@ fun RecommendationScreen(
                                 endDate = bundleEndDate.trim(),
                                 price = price,
                                 items = bundleItems,
+                                imageUrl = bundleImageUrl.trim().ifBlank { null },
                             )
                             val existingIndex = bundles.indexOfFirst { it.id == resolvedBundleId }
                             if (existingIndex >= 0) {
@@ -483,6 +505,7 @@ fun RecommendationScreen(
                                     price = draft.price,
                                     groupId = BUNDLE_GROUP_ID,
                                     code = "BND-${draft.id.takeLast(6).uppercase()}",
+                                    imageUrl = draft.imageUrl,
                                     isActive = true,
                                     outletId = currentOutletId(),
                                 ),
@@ -506,11 +529,30 @@ fun RecommendationScreen(
                         menuItems = menuItems,
                         selectedProductId = promoProductId,
                         promoName = promoName,
+                        promoQty = promoQty,
                         promoPrice = promoPrice,
                         promoDiscountPercent = promoDiscountPercent,
                         promoStartDate = promoStartDate,
                         promoEndDate = promoEndDate,
                         onPromoNameChange = { promoName = it },
+                        onPromoQtyChange = { value ->
+                            val digits = value.filter(Char::isDigit).take(2)
+                            promoQty = when {
+                                digits.isBlank() -> ""
+                                digits.toIntOrNull() == null -> "1"
+                                digits.toInt() < 1 -> "1"
+                                digits.toInt() > 99 -> "99"
+                                else -> digits
+                            }
+                        },
+                        onDecreasePromoQty = {
+                            val current = promoQty.toIntOrNull() ?: 1
+                            promoQty = (current - 1).coerceAtLeast(1).toString()
+                        },
+                        onIncreasePromoQty = {
+                            val current = promoQty.toIntOrNull() ?: 1
+                            promoQty = (current + 1).coerceAtMost(99).toString()
+                        },
                         onPromoPriceChange = { promoPrice = normalizeCurrencyInput(it) },
                         onPromoDiscountPercentChange = {
                             promoDiscountPercent = it.filter(Char::isDigit).take(2)
@@ -531,39 +573,57 @@ fun RecommendationScreen(
                                 message = "Pilih produk untuk promo."
                                 return@PromoEditorCard
                             }
+
+                            val qty = promoQty.toIntOrNull()?.coerceIn(1, 99) ?: 1
+                            val normalTotal = item.price * qty
+
+                            val normalizedPromoName = CatalogNameRules.normalize(promoName)
                             val percent = promoDiscountPercent.toIntOrNull()?.coerceIn(0, 95) ?: 0
                             val customPromoPrice = parseCurrencyInputOrNull(promoPrice)
+
                             val resolvedPrice = when {
                                 customPromoPrice != null && customPromoPrice > 0L -> customPromoPrice
-                                percent > 0 -> (item.price - (item.price * percent / 100L)).coerceAtLeast(0L)
+                                percent > 0 -> (normalTotal - (normalTotal * percent / 100L)).coerceAtLeast(0L)
                                 else -> 0L
                             }
-                            if (promoName.trim().isBlank()) {
-                                message = "Nama promo wajib diisi."
+
+                            if (normalizedPromoName.isBlank()) {
+                                message = "Nama promo wajib ASCII terbaca (maks ${CatalogNameRules.MAX_LENGTH} karakter)."
                                 return@PromoEditorCard
                             }
+
+                            if (qty < 1) {
+                                message = "Jumlah promo minimal 1."
+                                return@PromoEditorCard
+                            }
+
                             if (resolvedPrice <= 0L) {
                                 message = "Isi harga promo atau diskon persen yang valid."
                                 return@PromoEditorCard
                             }
+
                             promos.add(
                                 PromoDraft(
                                     id = IdGenerator.newId("promo_"),
-                                    name = promoName.trim(),
+                                    name = normalizedPromoName,
                                     itemId = item.id,
                                     itemName = item.name,
+                                    qty = qty,
                                     discountPercent = percent,
                                     promoPrice = resolvedPrice,
                                     startDate = promoStartDate.trim(),
                                     endDate = promoEndDate.trim(),
                                 )
                             )
+
                             val savedPromo = promos.last()
+
                             upsertRecommendationGroup(PROMO_GROUP_ID, PROMO_GROUP_NAME)
+
                             menuRepository.upsertItem(
                                 Item(
                                     id = promoMenuItemId(savedPromo.id),
-                                    name = savedPromo.name,
+                                    name = "${savedPromo.name} (${savedPromo.itemName} x${savedPromo.qty})",
                                     price = savedPromo.promoPrice,
                                     groupId = PROMO_GROUP_ID,
                                     code = "PRM-${savedPromo.id.takeLast(6).uppercase()}",
@@ -572,15 +632,19 @@ fun RecommendationScreen(
                                 ),
                                 outletId = currentOutletId(),
                             )
+
                             refreshMenu()
                             syncDraftsWithMenu()
                             persistRecommendationDrafts()
+
                             promoName = ""
+                            promoProductId = null
+                            promoQty = "1"
                             promoPrice = ""
                             promoDiscountPercent = ""
                             promoStartDate = ""
                             promoEndDate = ""
-                            promoProductId = null
+
                             syncMenuAfterChange("Promo tersimpan (${promos.size} total).")
                         },
                     )
@@ -714,6 +778,7 @@ private fun encodeBundles(bundles: List<BundleDraft>): String {
             bundle.endDate,
             bundle.price.toString(),
             itemsEncoded,
+            bundle.imageUrl.orEmpty(),
         ).joinToString(FIELD_SEPARATOR)
     }
 }
@@ -745,6 +810,7 @@ private fun decodeBundles(raw: String): List<BundleDraft> {
                 endDate = cols[3],
                 price = price,
                 items = items,
+                imageUrl = cols.getOrNull(6)?.takeIf { it.isNotBlank() },
             )
         }
 }
@@ -757,6 +823,7 @@ private fun encodePromos(promos: List<PromoDraft>): String {
             promo.name,
             promo.itemId,
             promo.itemName,
+            promo.qty.coerceAtLeast(1).toString(),
             promo.discountPercent.toString(),
             promo.promoPrice.toString(),
             promo.startDate,
@@ -770,20 +837,36 @@ private fun decodePromos(raw: String): List<PromoDraft> {
     return raw.split(RECORD_SEPARATOR)
         .mapNotNull { row ->
             val cols = row.split(FIELD_SEPARATOR)
-            if (cols.size < 8) return@mapNotNull null
-            PromoDraft(
-                id = cols[0],
-                name = cols[1],
-                itemId = cols[2],
-                itemName = cols[3],
-                discountPercent = cols[4].toIntOrNull() ?: 0,
-                promoPrice = cols[5].toLongOrNull() ?: 0L,
-                startDate = cols[6],
-                endDate = cols[7],
-            )
+
+            if (cols.size >= 9) {
+                PromoDraft(
+                    id = cols[0],
+                    name = cols[1],
+                    itemId = cols[2],
+                    itemName = cols[3],
+                    qty = cols[4].toIntOrNull()?.coerceAtLeast(1) ?: 1,
+                    discountPercent = cols[5].toIntOrNull() ?: 0,
+                    promoPrice = cols[6].toLongOrNull() ?: 0L,
+                    startDate = cols[7],
+                    endDate = cols[8],
+                )
+            } else if (cols.size >= 8) {
+                PromoDraft(
+                    id = cols[0],
+                    name = cols[1],
+                    itemId = cols[2],
+                    itemName = cols[3],
+                    qty = 1,
+                    discountPercent = cols[4].toIntOrNull() ?: 0,
+                    promoPrice = cols[5].toLongOrNull() ?: 0L,
+                    startDate = cols[6],
+                    endDate = cols[7],
+                )
+            } else {
+                null
+            }
         }
 }
-
 private fun normalizeCurrencyInput(value: String, maxDigits: Int = 12): String {
     return value.filter(Char::isDigit).take(maxDigits)
 }
@@ -923,11 +1006,14 @@ private fun BundleEditorCard(
     selectedQty: Map<String, Int>,
     bundleName: String,
     bundlePrice: String,
+    bundleImageUrl: String,
     bundleStartDate: String,
     bundleEndDate: String,
     isEditing: Boolean,
     onBundleNameChange: (String) -> Unit,
     onBundlePriceChange: (String) -> Unit,
+    onPickBundleImage: () -> Unit,
+    onClearBundleImage: () -> Unit,
     onPickBundleStartDate: () -> Unit,
     onPickBundleEndDate: () -> Unit,
     onToggleItem: (itemId: String, checked: Boolean) -> Unit,
@@ -965,6 +1051,49 @@ private fun BundleEditorCard(
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
+        )
+        Text("Foto Bundle", style = MaterialTheme.typography.titleSmall)
+        Text(
+            text = "Pilih foto dari galeri supaya bundle tampil lebih jelas di kasir/menu.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Button(
+                onClick = onPickBundleImage,
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color.White,
+                    contentColor = ActionBlue,
+                ),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp),
+            ) {
+                Text(if (bundleImageUrl.isBlank()) "Pilih Foto dari Galeri" else "Ganti Foto")
+            }
+            if (bundleImageUrl.isNotBlank()) {
+                Button(
+                    onClick = onClearBundleImage,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color.White,
+                        contentColor = Color(0xFFB42318),
+                    ),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp),
+                ) {
+                    Text("Hapus Foto")
+                }
+            }
+        }
+        ProductImageBanner(
+            imageUrl = bundleImageUrl,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(160.dp),
         )
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1096,11 +1225,15 @@ private fun PromoEditorCard(
     menuItems: List<Item>,
     selectedProductId: String?,
     promoName: String,
+    promoQty: String,
     promoPrice: String,
     promoDiscountPercent: String,
     promoStartDate: String,
     promoEndDate: String,
     onPromoNameChange: (String) -> Unit,
+    onPromoQtyChange: (String) -> Unit,
+    onDecreasePromoQty: () -> Unit,
+    onIncreasePromoQty: () -> Unit,
     onPromoPriceChange: (String) -> Unit,
     onPromoDiscountPercentChange: (String) -> Unit,
     onPickPromoStartDate: () -> Unit,
@@ -1108,9 +1241,14 @@ private fun PromoEditorCard(
     onSelectProduct: (String?) -> Unit,
     onSave: () -> Unit,
 ) {
+    val promoQtyValue = promoQty.toIntOrNull()?.coerceIn(1, 99) ?: 1
     val promoPriceValue = parseCurrencyInput(promoPrice)
+    val selectedItem = menuItems.firstOrNull { it.id == selectedProductId }
+    val normalTotal = selectedItem?.let { it.price * promoQtyValue } ?: 0L
+
     AppCard {
         AppSectionHeader("Buat Promo Produk", "Promo sementara untuk item tertentu")
+
         OutlinedTextField(
             value = promoName,
             onValueChange = onPromoNameChange,
@@ -1118,7 +1256,9 @@ private fun PromoEditorCard(
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
         )
+
         Text("Pilih produk", style = MaterialTheme.typography.titleSmall)
+
         FlowRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1140,24 +1280,67 @@ private fun PromoEditorCard(
                 }
             }
         }
+
+        Text("Jumlah produk promo", style = MaterialTheme.typography.titleSmall)
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        ) {
+            OutlinedButton(
+                onClick = onDecreasePromoQty,
+                enabled = promoQtyValue > 1,
+            ) {
+                Text("−")
+            }
+
+            OutlinedTextField(
+                value = promoQty,
+                onValueChange = onPromoQtyChange,
+                label = { Text("Qty") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+            )
+
+            OutlinedButton(
+                onClick = onIncreasePromoQty,
+                enabled = promoQtyValue < 99,
+            ) {
+                Text("+")
+            }
+        }
+
+        if (selectedItem != null) {
+            Text(
+                text = "Harga normal ${selectedItem.name} x$promoQtyValue: ${formatRupiah(normalTotal)}",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedTextField(
                 value = formatCurrencyInput(promoPrice),
                 onValueChange = onPromoPriceChange,
-                label = { Text("Harga Promo (opsional)") },
+                label = { Text("Harga Promo Total (opsional)") },
                 prefix = { Text("Rp") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.weight(1f),
                 singleLine = true,
             )
+
             OutlinedTextField(
                 value = promoDiscountPercent,
                 onValueChange = onPromoDiscountPercentChange,
                 label = { Text("Diskon %") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.weight(1f),
                 singleLine = true,
             )
         }
+
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             DateActionField(
                 label = "Mulai",
@@ -1166,6 +1349,7 @@ private fun PromoEditorCard(
                 onClick = onPickPromoStartDate,
                 modifier = Modifier.weight(1f),
             )
+
             DateActionField(
                 label = "Selesai",
                 value = promoEndDate,
@@ -1174,6 +1358,7 @@ private fun PromoEditorCard(
                 modifier = Modifier.weight(1f),
             )
         }
+
         if (promoPrice.isNotBlank()) {
             Text(
                 text = "Harga promo tersimpan: ${formatRupiah(promoPriceValue)}",
@@ -1181,6 +1366,18 @@ private fun PromoEditorCard(
                 style = MaterialTheme.typography.bodySmall,
             )
         }
+
+        if (promoDiscountPercent.isNotBlank() && selectedItem != null) {
+            val percent = promoDiscountPercent.toIntOrNull()?.coerceIn(0, 95) ?: 0
+            val calculatedPrice = (normalTotal - (normalTotal * percent / 100L)).coerceAtLeast(0L)
+
+            Text(
+                text = "Estimasi harga setelah diskon: ${formatRupiah(calculatedPrice)}",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+
         Button(
             onClick = onSave,
             colors = ButtonDefaults.buttonColors(containerColor = ActionBlue),
@@ -1243,6 +1440,12 @@ private fun RecommendationBundleRow(
     onDelete: () -> Unit,
 ) {
     AppCard {
+        ProductImageBanner(
+            imageUrl = bundle.imageUrl,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(120.dp),
+        )
         AppInfoLine("Bundle", bundle.name, emphasized = true)
         AppInfoLine("Harga", formatRupiah(bundle.price))
         AppInfoLine(
@@ -1272,15 +1475,18 @@ private fun RecommendationPromoRow(
     promo: PromoDraft,
     onDelete: () -> Unit,
 ) {
+    val qty = promo.qty.coerceAtLeast(1)
+
     AppCard {
         AppInfoLine("Promo", promo.name, emphasized = true)
-        AppInfoLine("Produk", promo.itemName)
-        AppInfoLine("Harga Promo", formatRupiah(promo.promoPrice))
+        AppInfoLine("Produk", "${promo.itemName} x$qty")
+        AppInfoLine("Harga Promo Total", formatRupiah(promo.promoPrice))
         AppInfoLine("Diskon", "${promo.discountPercent}%")
         AppInfoLine(
             "Periode",
             "${promo.startDate.ifBlank { "-" }} s/d ${promo.endDate.ifBlank { "-" }}",
         )
+
         OutlinedButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) {
             Text("Hapus Promo")
         }

@@ -102,3 +102,163 @@ enum class ServerOrderStatus {
     DONE,
     CANCELLED,
 }
+
+@Serializable
+data class ServerReservationDto(
+    val id: String,
+    @SerialName("customer_name") val customerName: String,
+    val phone: String? = null,
+    @SerialName("party_size") val partySize: Int,
+    @SerialName("reservation_at") val reservationAt: String,
+    @SerialName("reservation_date") val reservationDate: String? = null,
+    @SerialName("reservation_time") val reservationTime: String? = null,
+    val status: String,
+    val note: String? = null,
+    @SerialName("outlet_id") val outletId: String? = null,
+    @SerialName("created_at") val createdAt: String,
+    @SerialName("updated_at") val updatedAt: String? = null,
+)
+
+@Serializable
+data class ServerReservationStatusRequest(
+    val status: String,
+    @SerialName("outlet_id") val outletId: String? = null,
+)
+
+enum class ServerReservationStatus {
+    PENDING,
+    CONFIRMED,
+    SEATED,
+    COMPLETED,
+    CANCELLED,
+}
+
+@Serializable
+data class ServerAuthSessionLoginRequest(
+    val role: String,
+    @SerialName("user_id") val userId: String? = null,
+    @SerialName("user_name") val userName: String? = null,
+    @SerialName("outlet_id") val outletId: String? = null,
+    @SerialName("device_id") val deviceId: String? = null,
+)
+
+@Serializable
+data class ServerAuthSessionRefreshRequest(
+    @SerialName("outlet_id") val outletId: String? = null,
+    @SerialName("device_id") val deviceId: String? = null,
+)
+
+@Serializable
+data class ServerAuthSessionDto(
+    @SerialName("session_id") val sessionId: String,
+    @SerialName("access_token") val accessToken: String,
+    val role: String,
+    @SerialName("user_id") val userId: String,
+    @SerialName("user_name") val userName: String,
+    @SerialName("outlet_id") val outletId: String,
+    @SerialName("issued_at") val issuedAt: String,
+    @SerialName("expires_at") val expiresAt: String,
+)
+
+@Serializable
+data class ServerAuthPairingCodeCreateRequest(
+    val role: String = "OWNER",
+    @SerialName("outlet_id") val outletId: String? = null,
+    @SerialName("ttl_seconds") val ttlSeconds: Long? = null,
+)
+
+@Serializable
+data class ServerAuthPairingCodeDto(
+    @SerialName("pairing_code") val pairingCode: String,
+    val role: String,
+    @SerialName("outlet_id") val outletId: String,
+    @SerialName("issued_at") val issuedAt: String,
+    @SerialName("expires_at") val expiresAt: String,
+)
+
+@Serializable
+data class ServerAuthPairingCodeRedeemRequest(
+    @SerialName("pairing_code") val pairingCode: String,
+    val role: String,
+    @SerialName("user_id") val userId: String? = null,
+    @SerialName("user_name") val userName: String? = null,
+    @SerialName("outlet_id") val outletId: String? = null,
+    @SerialName("device_id") val deviceId: String? = null,
+)
+
+@Serializable
+data class ServerAuthUserDto(
+    @SerialName("user_id") val userId: String,
+    @SerialName("user_name") val userName: String,
+    val role: String,
+    @SerialName("outlet_id") val outletId: String,
+    val active: Boolean,
+    @SerialName("created_at") val createdAt: String,
+    @SerialName("updated_at") val updatedAt: String,
+    @SerialName("last_login_at") val lastLoginAt: String? = null,
+)
+
+@Serializable
+data class ServerAuthUserUpsertRequest(
+    @SerialName("user_id") val userId: String,
+    @SerialName("user_name") val userName: String,
+    val role: String,
+    @SerialName("outlet_id") val outletId: String? = null,
+    val active: Boolean = true,
+)
+
+@Serializable
+data class ServerAuthUserStatusRequest(
+    val role: String,
+    val active: Boolean,
+    @SerialName("outlet_id") val outletId: String? = null,
+)
+
+@Serializable
+data class ServerAuthSessionViewDto(
+    @SerialName("session_id") val sessionId: String,
+    val role: String,
+    @SerialName("user_id") val userId: String,
+    @SerialName("user_name") val userName: String,
+    @SerialName("outlet_id") val outletId: String,
+    @SerialName("device_id") val deviceId: String? = null,
+    @SerialName("issued_at") val issuedAt: String,
+    @SerialName("expires_at") val expiresAt: String,
+    @SerialName("last_seen_at") val lastSeenAt: String? = null,
+    @SerialName("revoked_at") val revokedAt: String? = null,
+)
+
+@Serializable
+data class ServerAuthAuditLogDto(
+    val id: String,
+    @SerialName("outlet_id") val outletId: String,
+    @SerialName("actor_role") val actorRole: String? = null,
+    @SerialName("actor_user_id") val actorUserId: String? = null,
+    val action: String,
+    @SerialName("target_type") val targetType: String? = null,
+    @SerialName("target_id") val targetId: String? = null,
+    @SerialName("payload_json") val payloadJson: String? = null,
+    @SerialName("created_at") val createdAt: String,
+)
+
+@Serializable
+data class ServerOutletDto(
+    @SerialName("outlet_id") val outletId: String,
+    val name: String,
+    val active: Boolean = true,
+    @SerialName("created_at") val createdAt: String,
+    @SerialName("updated_at") val updatedAt: String,
+)
+
+@Serializable
+data class ServerOutletUpsertRequest(
+    @SerialName("outlet_id") val outletId: String,
+    val name: String,
+    val active: Boolean = true,
+)
+
+@Serializable
+data class ServerOutletStatusRequest(
+    val active: Boolean,
+    @SerialName("outlet_id") val outletId: String? = null,
+)

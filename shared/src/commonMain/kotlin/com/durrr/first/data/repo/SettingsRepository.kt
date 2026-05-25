@@ -3,7 +3,7 @@ package com.durrr.first.data.repo
 import com.durrr.first.TokoDatabase
 import com.durrr.first.domain.model.ReceiptConfig
 import com.durrr.first.domain.service.IdGenerator
-import com.durrr.first.network.security.OpaqueBearerTokenCodec
+import com.durrr.first.network.dto.ServerAuthSessionDto
 
 class SettingsRepository(private val db: TokoDatabase) {
     data class LocalAccountSession(
@@ -73,8 +73,6 @@ class SettingsRepository(private val db: TokoDatabase) {
 
     fun getOwnerName(): String? = getOptionalValue(KEY_OWNER_NAME)
 
-    fun getServerApiSharedSecret(): String? = getOptionalValue(KEY_SERVER_API_SHARED_SECRET)
-
     fun ensureDefaultCashierId(existingName: String? = null): String {
         val existing = getDefaultCashierId()
         if (existing != null) return existing
@@ -133,12 +131,21 @@ class SettingsRepository(private val db: TokoDatabase) {
     }
 
     fun clearActiveUser(): Boolean {
+        val active = getActiveUserSession()
         return runCatching {
             ensureSettingsTable()
             db.transaction {
                 db.tokoQueries.upsertAppSetting(KEY_ACTIVE_USER_ROLE, "")
                 db.tokoQueries.upsertAppSetting(KEY_ACTIVE_USER_ID, "")
                 db.tokoQueries.upsertAppSetting(KEY_ACTIVE_USER_NAME, "")
+                clearLegacyServerSessionSlots()
+            }
+            if (active != null) {
+                clearScopedServerSessionSlots(
+                    outletId = null,
+                    role = active.role,
+                    userId = active.userId,
+                )
             }
             true
         }.getOrDefault(false)
@@ -156,24 +163,93 @@ class SettingsRepository(private val db: TokoDatabase) {
         )
     }
 
-    fun resolveServerApiBearerToken(role: String?): String? {
-        val normalizedRole = role?.trim()?.uppercase()
-        if (normalizedRole != ROLE_OWNER && normalizedRole != ROLE_CASHIER) return null
-        val secret = getServerApiSharedSecret() ?: return null
-        val pin = when (normalizedRole) {
-            ROLE_OWNER -> getOptionalValue(KEY_OWNER_PIN)
-            ROLE_CASHIER -> getOptionalValue(KEY_DEFAULT_CASHIER_PIN)
-            else -> null
-        } ?: return null
-        return OpaqueBearerTokenCodec.issue(
-            secret = secret,
-            role = normalizedRole,
-            pin = pin,
+    fun getActiveUserServerApiBearerToken(outletId: String? = null): String? {
+        val active = getActiveUserSession() ?: return null
+        val normalizedOutletId = resolveOutletId(outletId)
+        return getStoredServerSessionToken(
+            outletId = normalizedOutletId,
+            role = active.role,
+            userId = active.userId,
         )
     }
 
-    fun getActiveUserServerApiBearerToken(): String? {
-        return resolveServerApiBearerToken(getActiveUserSession()?.role)
+    fun saveServerAuthSession(session: ServerAuthSessionDto): Boolean {
+        val normalizedOutletId = resolveOutletId(session.outletId)
+        val normalizedRole = session.role.trim().uppercase()
+        val normalizedUserId = session.userId.trim()
+        if (normalizedRole != ROLE_OWNER && normalizedRole != ROLE_CASHIER) return false
+        if (normalizedUserId.isBlank()) return false
+        val scope = buildServerSessionScope(
+            outletId = normalizedOutletId,
+            role = normalizedRole,
+            userId = normalizedUserId,
+        )
+        return runCatching {
+            ensureSettingsTable()
+            db.transaction {
+                // Keep backward-compatible single-slot keys for old flows.
+                db.tokoQueries.upsertAppSetting(KEY_SERVER_SESSION_TOKEN, session.accessToken.trim())
+                db.tokoQueries.upsertAppSetting(KEY_SERVER_SESSION_ID, session.sessionId.trim())
+                db.tokoQueries.upsertAppSetting(KEY_SERVER_SESSION_ROLE, normalizedRole)
+                db.tokoQueries.upsertAppSetting(KEY_SERVER_SESSION_USER_ID, normalizedUserId)
+                db.tokoQueries.upsertAppSetting(KEY_SERVER_SESSION_USER_NAME, session.userName.trim())
+                db.tokoQueries.upsertAppSetting(KEY_SERVER_SESSION_OUTLET_ID, normalizedOutletId)
+                db.tokoQueries.upsertAppSetting(KEY_SERVER_SESSION_ISSUED_AT, session.issuedAt.trim())
+                db.tokoQueries.upsertAppSetting(KEY_SERVER_SESSION_EXPIRES_AT, session.expiresAt.trim())
+
+                // Multi-outlet/user scoped slots.
+                db.tokoQueries.upsertAppSetting(scope.tokenKey, session.accessToken.trim())
+                db.tokoQueries.upsertAppSetting(scope.sessionIdKey, session.sessionId.trim())
+                db.tokoQueries.upsertAppSetting(scope.userNameKey, session.userName.trim())
+                db.tokoQueries.upsertAppSetting(scope.issuedAtKey, session.issuedAt.trim())
+                db.tokoQueries.upsertAppSetting(scope.expiresAtKey, session.expiresAt.trim())
+            }
+            true
+        }.getOrDefault(false)
+    }
+
+    fun clearServerAuthSession(
+        outletId: String? = null,
+        role: String? = null,
+        userId: String? = null,
+    ): Boolean {
+        val active = getActiveUserSession()
+        val normalizedRole = role?.trim()?.uppercase()
+            ?: active?.role
+            ?: ""
+        val normalizedUserId = userId?.trim()
+            ?: active?.userId
+            ?: ""
+        val normalizedOutletId = outletId?.let(::resolveOutletId)
+        return runCatching {
+            ensureSettingsTable()
+            db.transaction {
+                clearLegacyServerSessionSlots()
+            }
+            clearScopedServerSessionSlots(
+                outletId = normalizedOutletId,
+                role = normalizedRole,
+                userId = normalizedUserId,
+            )
+            true
+        }.getOrDefault(false)
+    }
+
+    fun getOrCreateDeviceId(): String {
+        val existing = getOptionalValue(KEY_DEVICE_ID)
+        if (existing != null) return existing
+        val generated = IdGenerator.newId("dev_")
+        upsert(KEY_DEVICE_ID, generated)
+        return generated
+    }
+
+    fun resolveOutletId(outletId: String? = null): String {
+        return normalizeOutletId(
+            outletId
+                ?.trim()
+                ?.ifBlank { null }
+                ?: getOptionalValue(KEY_OUTLET_ID),
+        )
     }
 
     fun resolveCurrentCashierId(): String {
@@ -197,25 +273,26 @@ class SettingsRepository(private val db: TokoDatabase) {
     }
 
     fun resetAllLocal(outletId: String = DEFAULT_OUTLET_ID): Boolean {
+        val scopedOutletId = normalizeOutletId(outletId)
         return runCatching {
             ensureSettingsTable()
             db.transaction {
-                db.tokoQueries.deleteOrderItemsByOutlet(outletId)
-                db.tokoQueries.deleteOrderHeadersByOutlet(outletId)
-                db.tokoQueries.deleteTransaksiDetailsByOutlet(outletId)
-                db.tokoQueries.deletePembayaranByOutlet(outletId)
-                db.tokoQueries.deleteTransaksiByOutlet(outletId)
-                db.tokoQueries.deleteProductModifierLinksByOutlet(outletId)
-                db.tokoQueries.deleteModifierOptionsByOutlet(outletId)
-                db.tokoQueries.deleteModifierGroupsByOutlet(outletId)
-                db.tokoQueries.deleteItemsByOutlet(outletId)
-                db.tokoQueries.deleteGroupsByOutlet(outletId)
-                db.tokoQueries.deleteOutboxByOutlet(outletId)
-                db.tokoQueries.deleteStockLedgerByOutlet(outletId)
-                db.tokoQueries.deleteStockThresholdByOutlet(outletId)
-                db.tokoQueries.deleteStockBalanceByOutlet(outletId)
-                db.tokoQueries.deleteCashMovementsByOutlet(outletId)
-                db.tokoQueries.deleteCashSessionsByOutlet(outletId)
+                db.tokoQueries.deleteOrderItemsByOutlet(scopedOutletId)
+                db.tokoQueries.deleteOrderHeadersByOutlet(scopedOutletId)
+                db.tokoQueries.deleteTransaksiDetailsByOutlet(scopedOutletId)
+                db.tokoQueries.deletePembayaranByOutlet(scopedOutletId)
+                db.tokoQueries.deleteTransaksiByOutlet(scopedOutletId)
+                db.tokoQueries.deleteProductModifierLinksByOutlet(scopedOutletId)
+                db.tokoQueries.deleteModifierOptionsByOutlet(scopedOutletId)
+                db.tokoQueries.deleteModifierGroupsByOutlet(scopedOutletId)
+                db.tokoQueries.deleteItemsByOutlet(scopedOutletId)
+                db.tokoQueries.deleteGroupsByOutlet(scopedOutletId)
+                db.tokoQueries.deleteOutboxByOutlet(scopedOutletId)
+                db.tokoQueries.deleteStockLedgerByOutlet(scopedOutletId)
+                db.tokoQueries.deleteStockThresholdByOutlet(scopedOutletId)
+                db.tokoQueries.deleteStockBalanceByOutlet(scopedOutletId)
+                db.tokoQueries.deleteCashMovementsByOutlet(scopedOutletId)
+                db.tokoQueries.deleteCashSessionsByOutlet(scopedOutletId)
                 db.tokoQueries.deleteAllAppSettings()
             }
             true
@@ -248,11 +325,32 @@ class SettingsRepository(private val db: TokoDatabase) {
         const val KEY_ACTIVE_USER_ROLE = "active_user_role"
         const val KEY_ACTIVE_USER_ID = "active_user_id"
         const val KEY_ACTIVE_USER_NAME = "active_user_name"
-        const val KEY_SERVER_API_SHARED_SECRET = "server_api_shared_secret"
+        const val KEY_DEVICE_ID = "device_id"
+        const val KEY_SERVER_SESSION_TOKEN = "server_session_token"
+        const val KEY_SERVER_SESSION_ID = "server_session_id"
+        const val KEY_SERVER_SESSION_ROLE = "server_session_role"
+        const val KEY_SERVER_SESSION_USER_ID = "server_session_user_id"
+        const val KEY_SERVER_SESSION_USER_NAME = "server_session_user_name"
+        const val KEY_SERVER_SESSION_OUTLET_ID = "server_session_outlet_id"
+        const val KEY_SERVER_SESSION_ISSUED_AT = "server_session_issued_at"
+        const val KEY_SERVER_SESSION_EXPIRES_AT = "server_session_expires_at"
+        const val KEY_SERVER_SESSION_TOKEN_PREFIX = "server_session_token."
+        const val KEY_SERVER_SESSION_ID_PREFIX = "server_session_id."
+        const val KEY_SERVER_SESSION_USER_NAME_PREFIX = "server_session_user_name."
+        const val KEY_SERVER_SESSION_ISSUED_AT_PREFIX = "server_session_issued_at."
+        const val KEY_SERVER_SESSION_EXPIRES_AT_PREFIX = "server_session_expires_at."
         const val DEFAULT_OUTLET_ID = "default"
         const val SETUP_MODE_LOCAL_FIRST = "LOCAL_FIRST"
         const val ROLE_OWNER = "OWNER"
         const val ROLE_CASHIER = "CASHIER"
+
+        fun normalizeOutletId(value: String?): String {
+            return value.orEmpty()
+                .trim()
+                .replace(Regex("\\s+"), "-")
+                .ifBlank { DEFAULT_OUTLET_ID }
+                .take(64)
+        }
 
         private fun defaultConfig(): ReceiptConfig = ReceiptConfig(
             storeName = "SuCash",
@@ -279,5 +377,107 @@ class SettingsRepository(private val db: TokoDatabase) {
         private fun isValidPin(pin: String): Boolean {
             return pin.length in 4..6 && pin.all(Char::isDigit)
         }
+    }
+
+    private fun getStoredServerSessionToken(
+        outletId: String,
+        role: String,
+        userId: String,
+    ): String? {
+        val scope = buildServerSessionScope(
+            outletId = outletId,
+            role = role,
+            userId = userId,
+        )
+        val scopedToken = getOptionalValue(scope.tokenKey)
+        if (scopedToken != null) return scopedToken
+
+        // Fallback for pre-scope single-slot storage.
+        val token = getOptionalValue(KEY_SERVER_SESSION_TOKEN) ?: return null
+        val storedOutletId = resolveOutletId(getOptionalValue(KEY_SERVER_SESSION_OUTLET_ID))
+        val storedRole = getOptionalValue(KEY_SERVER_SESSION_ROLE)?.uppercase() ?: return null
+        val storedUserId = getOptionalValue(KEY_SERVER_SESSION_USER_ID) ?: return null
+        if (storedOutletId != outletId) return null
+        if (storedRole != role.uppercase()) return null
+        if (storedUserId != userId) return null
+        return token
+    }
+
+    private fun clearLegacyServerSessionSlots() {
+        db.tokoQueries.upsertAppSetting(KEY_SERVER_SESSION_TOKEN, "")
+        db.tokoQueries.upsertAppSetting(KEY_SERVER_SESSION_ID, "")
+        db.tokoQueries.upsertAppSetting(KEY_SERVER_SESSION_ROLE, "")
+        db.tokoQueries.upsertAppSetting(KEY_SERVER_SESSION_USER_ID, "")
+        db.tokoQueries.upsertAppSetting(KEY_SERVER_SESSION_USER_NAME, "")
+        db.tokoQueries.upsertAppSetting(KEY_SERVER_SESSION_OUTLET_ID, "")
+        db.tokoQueries.upsertAppSetting(KEY_SERVER_SESSION_ISSUED_AT, "")
+        db.tokoQueries.upsertAppSetting(KEY_SERVER_SESSION_EXPIRES_AT, "")
+    }
+
+    private fun clearScopedServerSessionSlots(
+        outletId: String?,
+        role: String,
+        userId: String,
+    ) {
+        if (role.isBlank() || userId.isBlank()) return
+        val allRows = db.tokoQueries.selectAllAppSettings().executeAsList()
+        val roleToken = sanitizeSettingTokenSegment(role)
+        val userToken = sanitizeSettingTokenSegment(userId)
+        val outletToken = outletId?.let(::sanitizeSettingTokenSegment)
+        val prefixes = listOf(
+            KEY_SERVER_SESSION_TOKEN_PREFIX,
+            KEY_SERVER_SESSION_ID_PREFIX,
+            KEY_SERVER_SESSION_USER_NAME_PREFIX,
+            KEY_SERVER_SESSION_ISSUED_AT_PREFIX,
+            KEY_SERVER_SESSION_EXPIRES_AT_PREFIX,
+        )
+        allRows.forEach { row ->
+            val key = row.setting_key
+            val matchedPrefix = prefixes.firstOrNull { key.startsWith(it) } ?: return@forEach
+            val suffix = key.removePrefix(matchedPrefix)
+            val segments = suffix.split('.')
+            if (segments.size != 3) return@forEach
+            val matchOutlet = outletToken == null || segments[0] == outletToken
+            val matchRole = segments[1] == roleToken
+            val matchUser = segments[2] == userToken
+            if (matchOutlet && matchRole && matchUser) {
+                db.tokoQueries.upsertAppSetting(key, "")
+            }
+        }
+    }
+
+    private data class ServerSessionScope(
+        val tokenKey: String,
+        val sessionIdKey: String,
+        val userNameKey: String,
+        val issuedAtKey: String,
+        val expiresAtKey: String,
+    )
+
+    private fun buildServerSessionScope(
+        outletId: String,
+        role: String,
+        userId: String,
+    ): ServerSessionScope {
+        val outletToken = sanitizeSettingTokenSegment(outletId)
+        val roleToken = sanitizeSettingTokenSegment(role)
+        val userToken = sanitizeSettingTokenSegment(userId)
+        val suffix = "$outletToken.$roleToken.$userToken"
+        return ServerSessionScope(
+            tokenKey = "$KEY_SERVER_SESSION_TOKEN_PREFIX$suffix",
+            sessionIdKey = "$KEY_SERVER_SESSION_ID_PREFIX$suffix",
+            userNameKey = "$KEY_SERVER_SESSION_USER_NAME_PREFIX$suffix",
+            issuedAtKey = "$KEY_SERVER_SESSION_ISSUED_AT_PREFIX$suffix",
+            expiresAtKey = "$KEY_SERVER_SESSION_EXPIRES_AT_PREFIX$suffix",
+        )
+    }
+
+    private fun sanitizeSettingTokenSegment(value: String): String {
+        return value.trim()
+            .lowercase()
+            .replace(Regex("[^a-z0-9_-]+"), "_")
+            .trim('_')
+            .ifBlank { "na" }
+            .take(64)
     }
 }

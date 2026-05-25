@@ -58,10 +58,16 @@ class TransaksiSyncRepository(
             },
             outletId = outletId,
         )
+        val bearerToken = settingsRepository?.getActiveUserServerApiBearerToken(outletId)
+            ?.trim()
+            .orEmpty()
+        if (settingsRepository != null && bearerToken.isBlank()) {
+            error("Session server belum aktif. Pairing server dulu lalu login ulang.")
+        }
         val response = apiClient.syncTransactions(
             baseUrl = baseUrl,
             request = request,
-            bearerToken = settingsRepository?.getActiveUserServerApiBearerToken(),
+            bearerToken = bearerToken.ifBlank { null },
         )
         val sentAt = nowIso()
         val acceptedIds = if (response.acks.isNotEmpty()) {

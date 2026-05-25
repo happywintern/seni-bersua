@@ -6,6 +6,11 @@ import com.durrr.first.network.dto.PaymentBreakdownDto
 import com.durrr.first.network.dto.ProductMovementDto
 import com.durrr.first.network.dto.RecapRangeDto
 import com.durrr.first.network.dto.RecapSummaryResponse
+import com.durrr.first.network.dto.ServerAuthSessionDto
+import com.durrr.first.network.dto.ServerAuthPairingCodeDto
+import com.durrr.first.network.dto.ServerAuthAuditLogDto
+import com.durrr.first.network.dto.ServerAuthSessionViewDto
+import com.durrr.first.network.dto.ServerAuthUserDto
 import com.durrr.first.network.dto.ServerMenuCatalogDto
 import com.durrr.first.network.dto.ServerMenuItemDto
 import com.durrr.first.network.dto.ServerModifierGroupDto
@@ -31,14 +36,87 @@ import java.sql.PreparedStatement
 import java.sql.SQLException
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.LocalTime
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
+import java.util.Base64
+import java.security.SecureRandom
 import java.util.UUID
 
 private const val DEFAULT_OUTLET_ID = "default"
+private const val MAX_CATALOG_NAME_LENGTH = 50
+private const val DEFAULT_API_SESSION_TTL_SECONDS = 86400L
+private const val MIN_API_SESSION_TTL_SECONDS = 300L
+private const val DEFAULT_API_PAIRING_TTL_SECONDS = 300L
+private const val MIN_API_PAIRING_TTL_SECONDS = 30L
+private const val MAX_API_PAIRING_TTL_SECONDS = 1800L
+private const val API_PAIRING_NEVER_EXPIRES_AT = "9999-12-31T23:59:59Z"
 
 @Serializable
 data class Customer(
     val uuid: String,
     val name: String,
+)
+
+@Serializable
+data class OutletTable(
+    val uuid: String,
+    val name: String,
+    @SerialName("outlet_id")
+    val outletId: String,
+    @SerialName("table_index")
+    val tableIndex: Int? = null,
+)
+
+@Serializable
+data class OutletProfile(
+    @SerialName("outlet_id")
+    val outletId: String,
+    val name: String,
+    val active: Boolean,
+    @SerialName("created_at")
+    val createdAt: String,
+    @SerialName("updated_at")
+    val updatedAt: String,
+)
+
+@Serializable
+data class AuthUserProfile(
+    @SerialName("user_id")
+    val userId: String,
+    @SerialName("user_name")
+    val userName: String,
+    val role: String,
+    @SerialName("outlet_id")
+    val outletId: String,
+    val active: Boolean,
+    @SerialName("created_at")
+    val createdAt: String,
+    @SerialName("updated_at")
+    val updatedAt: String,
+    @SerialName("last_login_at")
+    val lastLoginAt: String? = null,
+)
+
+@Serializable
+data class AuthAuditLogEntry(
+    val id: String,
+    @SerialName("outlet_id")
+    val outletId: String,
+    @SerialName("actor_role")
+    val actorRole: String? = null,
+    @SerialName("actor_user_id")
+    val actorUserId: String? = null,
+    val action: String,
+    @SerialName("target_type")
+    val targetType: String? = null,
+    @SerialName("target_id")
+    val targetId: String? = null,
+    @SerialName("payload_json")
+    val payloadJson: String? = null,
+    @SerialName("created_at")
+    val createdAt: String,
 )
 
 @Serializable
@@ -73,6 +151,109 @@ data class CreateOrderRequest(
     val outletId: String? = null,
     val paymentConfirmation: String? = null,
     val note: String? = null,
+)
+
+@Serializable
+data class CreateReservationRequest(
+    @SerialName("customer_name")
+    val customerName: String? = null,
+    @SerialName("customerName")
+    val customerNameCamel: String? = null,
+    val phone: String? = null,
+    @SerialName("party_size")
+    val partySize: Int? = null,
+    @SerialName("partySize")
+    val partySizeCamel: Int? = null,
+    @SerialName("reservation_at")
+    val reservationAt: String? = null,
+    @SerialName("reservationAt")
+    val reservationAtCamel: String? = null,
+    @SerialName("reservation_date")
+    val reservationDate: String? = null,
+    @SerialName("reservationDate")
+    val reservationDateCamel: String? = null,
+    @SerialName("reservation_time")
+    val reservationTime: String? = null,
+    @SerialName("reservationTime")
+    val reservationTimeCamel: String? = null,
+    @SerialName("outlet_id")
+    val outletId: String? = null,
+    @SerialName("outletId")
+    val outletIdCamel: String? = null,
+    val note: String? = null,
+) {
+    fun resolvedCustomerName(): String {
+        return customerName.orEmpty()
+            .trim()
+            .ifBlank { customerNameCamel.orEmpty().trim() }
+    }
+
+    fun resolvedPartySize(): Int {
+        val primary = partySize ?: 0
+        if (primary > 0) return primary
+        val secondary = partySizeCamel ?: 0
+        if (secondary > 0) return secondary
+        return 1
+    }
+
+    fun resolvedReservationAt(): String? {
+        return reservationAt.orEmpty()
+            .trim()
+            .ifBlank { reservationAtCamel.orEmpty().trim() }
+            .ifBlank { null }
+    }
+
+    fun resolvedReservationDate(): String? {
+        return reservationDate.orEmpty()
+            .trim()
+            .ifBlank { reservationDateCamel.orEmpty().trim() }
+            .ifBlank { null }
+    }
+
+    fun resolvedReservationTime(): String? {
+        return reservationTime.orEmpty()
+            .trim()
+            .ifBlank { reservationTimeCamel.orEmpty().trim() }
+            .ifBlank { null }
+    }
+
+    fun resolvedOutletId(): String? {
+        return outletId.orEmpty()
+            .trim()
+            .ifBlank { outletIdCamel.orEmpty().trim() }
+            .ifBlank { null }
+    }
+}
+
+@Serializable
+data class ReservationView(
+    val id: String,
+    @SerialName("customer_name")
+    val customerName: String,
+    val phone: String? = null,
+    @SerialName("party_size")
+    val partySize: Int,
+    @SerialName("reservation_at")
+    val reservationAt: String,
+    @SerialName("reservation_date")
+    val reservationDate: String,
+    @SerialName("reservation_time")
+    val reservationTime: String,
+    val status: String,
+    val note: String? = null,
+    @SerialName("outlet_id")
+    val outletId: String = DEFAULT_OUTLET_ID,
+    @SerialName("created_at")
+    val createdAt: String,
+    @SerialName("updated_at")
+    val updatedAt: String,
+)
+
+@Serializable
+data class UpdateReservationStatusRequest(
+    val status: String,
+    @SerialName("outlet_id")
+    val outletId: String? = null,
 )
 
 @Serializable
@@ -149,6 +330,27 @@ object ServerDatabase {
         ignoreUnknownKeys = true
         isLenient = true
     }
+    private val RESERVATION_ISO_FORMATTER: DateTimeFormatter =
+        DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+    private val RESERVATION_TIME_FORMATTER: DateTimeFormatter =
+        DateTimeFormatter.ofPattern("HH:mm")
+    private val apiSessionTtlSeconds: Long = EnvConfig
+        .get("SUCASH_API_SESSION_TTL_SECONDS", DEFAULT_API_SESSION_TTL_SECONDS.toString())
+        .orEmpty()
+        .trim()
+        .toLongOrNull()
+        ?.coerceAtLeast(MIN_API_SESSION_TTL_SECONDS)
+        ?: DEFAULT_API_SESSION_TTL_SECONDS
+    private val apiPairingTtlSeconds: Long = EnvConfig
+        .get("SUCASH_API_PAIRING_TTL_SECONDS", DEFAULT_API_PAIRING_TTL_SECONDS.toString())
+        .orEmpty()
+        .trim()
+        .toLongOrNull()
+        ?.let { raw ->
+            if (raw <= 0L) 0L else raw.coerceIn(MIN_API_PAIRING_TTL_SECONDS, MAX_API_PAIRING_TTL_SECONDS)
+        }
+        ?: DEFAULT_API_PAIRING_TTL_SECONDS
+    private val secureRandom = SecureRandom()
 
     private data class DateFilterSpec(
         val sql: String,
@@ -172,6 +374,44 @@ object ServerDatabase {
         val isDefault: Boolean,
     )
 
+    private data class ReservationTimestamp(
+        val iso: String,
+        val date: String,
+        val time: String,
+    )
+
+    private data class ApiAuthSessionRow(
+        val sessionId: String,
+        val accessToken: String,
+        val role: String,
+        val userId: String,
+        val userName: String,
+        val outletId: String,
+        val deviceId: String?,
+        val issuedAt: String,
+        val expiresAt: String,
+        val lastSeenAt: String? = null,
+        val revokedAt: String? = null,
+    )
+
+    private data class ApiAuthPairingCodeRow(
+        val pairingCode: String,
+        val role: String,
+        val outletId: String,
+        val expiresAt: String,
+    )
+
+    private data class ApiAuthUserRow(
+        val userId: String,
+        val userName: String,
+        val role: String,
+        val outletId: String,
+        val active: Boolean,
+        val createdAt: String,
+        val updatedAt: String,
+        val lastLoginAt: String?,
+    )
+
     fun init() {
         println("ServerDatabase init -> usingTurso=$usingTurso, jdbcUrl=${jdbcUrl.maskJdbcSecrets()}")
         if (!usingTurso) {
@@ -185,6 +425,13 @@ object ServerDatabase {
         }
         withConnection { connection ->
             createSchema(connection)
+            ensureOutletTransactional(
+                connection = connection,
+                outletId = DEFAULT_OUTLET_ID,
+                name = "Default Outlet",
+                active = true,
+            )
+            hydrateOutletsFromExistingDataTransactional(connection)
             migrateLocalSqliteDataToTursoIfEnabled(connection)
             migrateCompletedOrdersToTransaksiTransactional(connection)
             seedTableCustomersTransactional(connection, count = 10, outletId = DEFAULT_OUTLET_ID)
@@ -214,6 +461,351 @@ object ServerDatabase {
         }
     }
 
+    fun listTablesByOutlet(
+        outletId: String = DEFAULT_OUTLET_ID,
+        maxCount: Int = 200,
+    ): List<OutletTable> = withConnection { connection ->
+        val scopedOutletId = normalizeOutletId(outletId)
+        val clampedCount = maxCount.coerceIn(1, 500)
+        val byIndex = (1..clampedCount).associateWith { index ->
+            seededTableUuid(scopedOutletId, index)
+        }
+        val uuids = byIndex.values.toList()
+        if (uuids.isEmpty()) return@withConnection emptyList()
+        val placeholders = uuids.joinToString(",") { "?" }
+        val nameByUuid = HashMap<String, String>(uuids.size)
+        connection.prepareStatement(
+            """
+            SELECT uuid, name
+            FROM customer
+            WHERE uuid IN ($placeholders)
+            """.trimIndent()
+        ).use { statement ->
+            uuids.forEachIndexed { idx, uuid ->
+                statement.setString(idx + 1, uuid)
+            }
+            statement.executeQuery().use { rs ->
+                while (rs.next()) {
+                    nameByUuid[rs.getString("uuid")] = rs.getString("name")
+                }
+            }
+        }
+        byIndex.entries.mapNotNull { (index, uuid) ->
+            val name = nameByUuid[uuid] ?: return@mapNotNull null
+            OutletTable(
+                uuid = uuid,
+                name = name,
+                outletId = scopedOutletId,
+                tableIndex = index,
+            )
+        }
+    }
+
+    fun listOutlets(): List<OutletProfile> = withConnection { connection ->
+        connection.prepareStatement(
+            """
+            SELECT outlet_id, name, is_active, created_at, updated_at
+            FROM outlet
+            ORDER BY outlet_id ASC
+            """.trimIndent()
+        ).use { statement ->
+            statement.executeQuery().use { rs ->
+                buildList {
+                    while (rs.next()) {
+                        add(
+                            OutletProfile(
+                                outletId = normalizeOutletId(rs.getString("outlet_id")),
+                                name = rs.getString("name").orEmpty().ifBlank { "Outlet" },
+                                active = (rs.getInt("is_active") == 1),
+                                createdAt = rs.getString("created_at"),
+                                updatedAt = rs.getString("updated_at"),
+                            )
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fun listAuthUsers(outletId: String): List<ServerAuthUserDto> = withConnection { connection ->
+        val scopedOutletId = normalizeOutletId(outletId)
+        connection.prepareStatement(
+            """
+            SELECT user_id, user_name, role, outlet_id, is_active, created_at, updated_at, last_login_at
+            FROM api_auth_user
+            WHERE outlet_id = ?
+            ORDER BY role ASC, user_name ASC, user_id ASC
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, scopedOutletId)
+            statement.executeQuery().use { rs ->
+                buildList {
+                    while (rs.next()) {
+                        add(
+                            ServerAuthUserDto(
+                                userId = rs.getString("user_id").orEmpty(),
+                                userName = rs.getString("user_name").orEmpty(),
+                                role = rs.getString("role").orEmpty().trim().uppercase(),
+                                outletId = normalizeOutletId(rs.getString("outlet_id")),
+                                active = rs.getInt("is_active") == 1,
+                                createdAt = rs.getString("created_at"),
+                                updatedAt = rs.getString("updated_at"),
+                                lastLoginAt = rs.getString("last_login_at")?.trim()?.ifBlank { null },
+                            )
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fun upsertAuthUser(
+        outletId: String,
+        role: String,
+        userId: String,
+        userName: String,
+        active: Boolean = true,
+    ): ServerAuthUserDto? = withConnection { connection ->
+        val scopedOutletId = normalizeOutletId(outletId)
+        val normalizedRole = normalizeApiRoleOrNull(role) ?: return@withConnection null
+        val normalizedUserId = normalizeApiUserId(userId) ?: return@withConnection null
+        val normalizedUserName = normalizeCatalogName(userName).ifBlank {
+            defaultUserNameForRole(normalizedRole)
+        }
+        val nowIso = Instant.now().toString()
+        upsertAuthUserTransactional(
+            connection = connection,
+            outletId = scopedOutletId,
+            role = normalizedRole,
+            userId = normalizedUserId,
+            userName = normalizedUserName,
+            active = active,
+            nowIso = nowIso,
+        )
+        findAuthUserTransactional(
+            connection = connection,
+            outletId = scopedOutletId,
+            role = normalizedRole,
+            userId = normalizedUserId,
+        )?.toDto()
+    }
+
+    fun updateAuthUserStatus(
+        outletId: String,
+        role: String,
+        userId: String,
+        active: Boolean,
+    ): ServerAuthUserDto? = withConnection { connection ->
+        val scopedOutletId = normalizeOutletId(outletId)
+        val normalizedRole = normalizeApiRoleOrNull(role) ?: return@withConnection null
+        val normalizedUserId = normalizeApiUserId(userId) ?: return@withConnection null
+        val nowIso = Instant.now().toString()
+        connection.prepareStatement(
+            """
+            UPDATE api_auth_user
+            SET is_active = ?, updated_at = ?
+            WHERE outlet_id = ? AND role = ? AND user_id = ?
+            """.trimIndent()
+        ).use { statement ->
+            statement.setInt(1, if (active) 1 else 0)
+            statement.setString(2, nowIso)
+            statement.setString(3, scopedOutletId)
+            statement.setString(4, normalizedRole)
+            statement.setString(5, normalizedUserId)
+            val updated = executeWriteCount(statement)
+            if (updated <= 0) return@withConnection null
+        }
+        findAuthUserTransactional(
+            connection = connection,
+            outletId = scopedOutletId,
+            role = normalizedRole,
+            userId = normalizedUserId,
+        )?.toDto()
+    }
+
+    fun listApiAuthSessions(
+        outletId: String,
+        includeRevoked: Boolean = false,
+        limit: Int = 100,
+    ): List<ServerAuthSessionViewDto> = withConnection { connection ->
+        val scopedOutletId = normalizeOutletId(outletId)
+        val safeLimit = limit.coerceIn(1, 500)
+        val sql = buildString {
+            append(
+                """
+                SELECT session_id, role, user_id, user_name, outlet_id, device_id, issued_at, expires_at, last_seen_at, revoked_at
+                FROM api_auth_session
+                WHERE outlet_id = ?
+                """.trimIndent()
+            )
+            if (!includeRevoked) {
+                append(" AND revoked_at IS NULL")
+            }
+            append(" ORDER BY datetime(updated_at) DESC LIMIT ?")
+        }
+        connection.prepareStatement(sql).use { statement ->
+            statement.setString(1, scopedOutletId)
+            statement.setInt(2, safeLimit)
+            statement.executeQuery().use { rs ->
+                buildList {
+                    while (rs.next()) {
+                        add(
+                            ServerAuthSessionViewDto(
+                                sessionId = rs.getString("session_id"),
+                                role = rs.getString("role").orEmpty().trim().uppercase(),
+                                userId = rs.getString("user_id"),
+                                userName = rs.getString("user_name"),
+                                outletId = normalizeOutletId(rs.getString("outlet_id")),
+                                deviceId = rs.getString("device_id")?.trim()?.ifBlank { null },
+                                issuedAt = rs.getString("issued_at"),
+                                expiresAt = rs.getString("expires_at"),
+                                lastSeenAt = rs.getString("last_seen_at")?.trim()?.ifBlank { null },
+                                revokedAt = rs.getString("revoked_at")?.trim()?.ifBlank { null },
+                            )
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fun hasActiveOwnerSession(outletId: String): Boolean = withConnection { connection ->
+        val scopedOutletId = normalizeOutletId(outletId)
+        val nowIso = Instant.now().toString()
+        connection.prepareStatement(
+            """
+            SELECT 1
+            FROM api_auth_session
+            WHERE outlet_id = ?
+              AND role = 'OWNER'
+              AND revoked_at IS NULL
+              AND datetime(expires_at) > datetime(?)
+            LIMIT 1
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, scopedOutletId)
+            statement.setString(2, nowIso)
+            statement.executeQuery().use { rs -> rs.next() }
+        }
+    }
+
+    fun revokeApiAuthSessionById(
+        sessionId: String,
+        outletId: String,
+    ): Boolean = withConnection { connection ->
+        val scopedSessionId = sessionId.trim()
+        if (scopedSessionId.isBlank()) return@withConnection false
+        val scopedOutletId = normalizeOutletId(outletId)
+        val now = Instant.now().toString()
+        connection.prepareStatement(
+            """
+            UPDATE api_auth_session
+            SET revoked_at = ?, updated_at = ?
+            WHERE session_id = ? AND outlet_id = ? AND revoked_at IS NULL
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, now)
+            statement.setString(2, now)
+            statement.setString(3, scopedSessionId)
+            statement.setString(4, scopedOutletId)
+            executeWriteCount(statement) > 0
+        }
+    }
+
+    fun listApiAuthAuditLogs(
+        outletId: String,
+        limit: Int = 100,
+    ): List<ServerAuthAuditLogDto> = withConnection { connection ->
+        val scopedOutletId = normalizeOutletId(outletId)
+        val safeLimit = limit.coerceIn(1, 500)
+        connection.prepareStatement(
+            """
+            SELECT id, outlet_id, actor_role, actor_user_id, action, target_type, target_id, payload_json, created_at
+            FROM api_auth_audit_log
+            WHERE outlet_id = ?
+            ORDER BY datetime(created_at) DESC
+            LIMIT ?
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, scopedOutletId)
+            statement.setInt(2, safeLimit)
+            statement.executeQuery().use { rs ->
+                buildList {
+                    while (rs.next()) {
+                        add(
+                            ServerAuthAuditLogDto(
+                                id = rs.getString("id"),
+                                outletId = normalizeOutletId(rs.getString("outlet_id")),
+                                actorRole = rs.getString("actor_role")?.trim()?.ifBlank { null },
+                                actorUserId = rs.getString("actor_user_id")?.trim()?.ifBlank { null },
+                                action = rs.getString("action").orEmpty().trim().uppercase(),
+                                targetType = rs.getString("target_type")?.trim()?.ifBlank { null },
+                                targetId = rs.getString("target_id")?.trim()?.ifBlank { null },
+                                payloadJson = rs.getString("payload_json")?.trim()?.ifBlank { null },
+                                createdAt = rs.getString("created_at"),
+                            )
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fun upsertOutlet(
+        outletId: String,
+        name: String,
+        active: Boolean = true,
+    ): OutletProfile? = withConnection { connection ->
+        val scopedOutletId = normalizeOutletId(outletId)
+        val scopedName = normalizeCatalogName(name).ifBlank { "Outlet $scopedOutletId" }
+        val nowIso = Instant.now().toString()
+        if (!usingTurso) connection.autoCommit = false
+        try {
+            ensureOutletTransactional(
+                connection = connection,
+                outletId = scopedOutletId,
+                name = scopedName,
+                active = active,
+                nowIso = nowIso,
+            )
+            if (!usingTurso) connection.commit()
+            findOutletTransactional(connection, scopedOutletId)
+        } catch (t: Throwable) {
+            if (!usingTurso) connection.rollback()
+            throw t
+        } finally {
+            if (!usingTurso) connection.autoCommit = true
+        }
+    }
+
+    fun updateOutletStatus(
+        outletId: String,
+        active: Boolean,
+    ): OutletProfile? = withConnection { connection ->
+        val scopedOutletId = normalizeOutletId(outletId)
+        val nowIso = Instant.now().toString()
+        connection.prepareStatement(
+            """
+            UPDATE outlet
+            SET is_active = ?, updated_at = ?
+            WHERE outlet_id = ?
+            """.trimIndent()
+        ).use { statement ->
+            statement.setInt(1, if (active) 1 else 0)
+            statement.setString(2, nowIso)
+            statement.setString(3, scopedOutletId)
+            val updated = executeWriteCount(statement)
+            if (updated <= 0) return@withConnection null
+        }
+        findOutletTransactional(connection, scopedOutletId)
+    }
+
+    fun isOutletActive(outletId: String): Boolean = withConnection { connection ->
+        val scopedOutletId = normalizeOutletId(outletId)
+        val row = findOutletTransactional(connection, scopedOutletId) ?: return@withConnection false
+        row.active
+    }
+
     fun seedTableCustomers(
         count: Int = 10,
         outletId: String = DEFAULT_OUTLET_ID,
@@ -232,6 +824,10 @@ object ServerDatabase {
                 executeWrite(statement)
             }
             connection.prepareStatement("DELETE FROM order_header WHERE outlet_id = ?").use { statement ->
+                statement.setString(1, scopedOutletId)
+                executeWrite(statement)
+            }
+            connection.prepareStatement("DELETE FROM cafe_reservation WHERE outlet_id = ?").use { statement ->
                 statement.setString(1, scopedOutletId)
                 executeWrite(statement)
             }
@@ -276,6 +872,22 @@ object ServerDatabase {
                 statement.setString(1, scopedOutletId)
                 executeWrite(statement)
             }
+            connection.prepareStatement("DELETE FROM api_auth_session WHERE outlet_id = ?").use { statement ->
+                statement.setString(1, scopedOutletId)
+                executeWrite(statement)
+            }
+            connection.prepareStatement("DELETE FROM api_auth_pairing_code WHERE outlet_id = ?").use { statement ->
+                statement.setString(1, scopedOutletId)
+                executeWrite(statement)
+            }
+            connection.prepareStatement("DELETE FROM api_auth_user WHERE outlet_id = ?").use { statement ->
+                statement.setString(1, scopedOutletId)
+                executeWrite(statement)
+            }
+            connection.prepareStatement("DELETE FROM api_auth_audit_log WHERE outlet_id = ?").use { statement ->
+                statement.setString(1, scopedOutletId)
+                executeWrite(statement)
+            }
             connection.prepareStatement("DELETE FROM stock_ledger WHERE outlet_id = ?").use { statement ->
                 statement.setString(1, scopedOutletId)
                 executeWrite(statement)
@@ -298,6 +910,10 @@ object ServerDatabase {
             }
 
             seedTableCustomersTransactional(connection, count = 10, outletId = scopedOutletId)
+            ensureDefaultAuthUsersForOutletTransactional(
+                connection = connection,
+                outletId = scopedOutletId,
+            )
 
             if (!usingTurso) connection.commit()
             true
@@ -328,6 +944,451 @@ object ServerDatabase {
         }
     }
 
+    fun findTableByUuidInOutlet(
+        uuid: String,
+        outletId: String = DEFAULT_OUTLET_ID,
+        maxCount: Int = 200,
+    ): OutletTable? = withConnection { connection ->
+        val normalizedUuid = uuid.trim()
+        if (normalizedUuid.isBlank()) return@withConnection null
+        val scopedOutletId = normalizeOutletId(outletId)
+        val tableIndex = seededTableIndex(scopedOutletId, normalizedUuid, maxCount) ?: return@withConnection null
+        val table = findCustomerTransactional(connection, normalizedUuid) ?: return@withConnection null
+        OutletTable(
+            uuid = table.uuid,
+            name = table.name,
+            outletId = scopedOutletId,
+            tableIndex = tableIndex,
+        )
+    }
+
+    fun resolveTableOutlet(
+        uuid: String,
+        maxCount: Int = 200,
+    ): OutletTable? = withConnection { connection ->
+        val normalizedUuid = uuid.trim()
+        if (normalizedUuid.isBlank()) return@withConnection null
+        val table = findCustomerTransactional(connection, normalizedUuid) ?: return@withConnection null
+        connection.prepareStatement(
+            """
+            SELECT outlet_id
+            FROM order_header
+            WHERE customer_uuid = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, normalizedUuid)
+            statement.executeQuery().use { rs ->
+                if (rs.next()) {
+                    val outletId = normalizeOutletId(rs.getString("outlet_id"))
+                    return@withConnection OutletTable(
+                        uuid = table.uuid,
+                        name = table.name,
+                        outletId = outletId,
+                        tableIndex = seededTableIndex(outletId, table.uuid, maxCount),
+                    )
+                }
+            }
+        }
+
+        val activeOutletIds = ArrayList<String>()
+        connection.prepareStatement(
+            """
+            SELECT outlet_id
+            FROM outlet
+            WHERE is_active = 1
+            ORDER BY outlet_id ASC
+            """.trimIndent()
+        ).use { statement ->
+            statement.executeQuery().use { rs ->
+                while (rs.next()) {
+                    activeOutletIds += normalizeOutletId(rs.getString("outlet_id"))
+                }
+            }
+        }
+        for (outletId in activeOutletIds) {
+            val index = seededTableIndex(outletId, table.uuid, maxCount) ?: continue
+            return@withConnection OutletTable(
+                uuid = table.uuid,
+                name = table.name,
+                outletId = outletId,
+                tableIndex = index,
+            )
+        }
+        null
+    }
+
+    fun createApiAuthPairingCode(
+        role: String,
+        outletId: String?,
+        ttlSeconds: Long? = null,
+    ): ServerAuthPairingCodeDto? = withConnection { connection ->
+        val normalizedRole = role.trim().uppercase()
+        if (normalizedRole !in setOf("OWNER", "CASHIER")) return@withConnection null
+        val scopedOutletId = normalizeOutletId(outletId)
+        val now = Instant.now()
+        val issuedAt = now.toString()
+        val effectiveTtlSeconds = resolvePairingTtlSeconds(ttlSeconds)
+        val expiresAt = if (effectiveTtlSeconds <= 0L) {
+            API_PAIRING_NEVER_EXPIRES_AT
+        } else {
+            now.plusSeconds(effectiveTtlSeconds).toString()
+        }
+        if (!usingTurso) connection.autoCommit = false
+        try {
+            purgeExpiredApiAuthPairingCodesTransactional(connection)
+            var createdCode: String? = null
+            for (attempt in 1..8) {
+                val candidate = generateApiPairingCode()
+                val inserted = connection.prepareStatement(
+                    """
+                    INSERT INTO api_auth_pairing_code(
+                        pairing_code,
+                        role,
+                        outlet_id,
+                        issued_at,
+                        expires_at,
+                        used_at,
+                        used_by_session_id
+                    ) VALUES (?, ?, ?, ?, ?, NULL, NULL)
+                    """.trimIndent()
+                ).use { statement ->
+                    statement.setString(1, candidate)
+                    statement.setString(2, normalizedRole)
+                    statement.setString(3, scopedOutletId)
+                    statement.setString(4, issuedAt)
+                    statement.setString(5, expiresAt)
+                    try {
+                        executeWrite(statement)
+                        true
+                    } catch (e: SQLException) {
+                        if (isDuplicateKeyError(e)) {
+                            false
+                        } else {
+                            throw e
+                        }
+                    }
+                }
+                if (inserted) {
+                    createdCode = candidate
+                    break
+                }
+            }
+            if (createdCode == null) {
+                if (!usingTurso) connection.rollback()
+                return@withConnection null
+            }
+            if (!usingTurso) connection.commit()
+            ServerAuthPairingCodeDto(
+                pairingCode = createdCode.orEmpty(),
+                role = normalizedRole,
+                outletId = scopedOutletId,
+                issuedAt = issuedAt,
+                expiresAt = expiresAt,
+            )
+        } catch (t: Throwable) {
+            if (!usingTurso) connection.rollback()
+            throw t
+        } finally {
+            if (!usingTurso) connection.autoCommit = true
+        }
+    }
+
+    fun consumeApiAuthPairingCode(
+        pairingCode: String,
+        role: String,
+        outletId: String?,
+    ): ServerAuthPairingCodeDto? = withConnection { connection ->
+        val normalizedCode = pairingCode.trim().uppercase()
+        if (normalizedCode.isBlank()) return@withConnection null
+        val normalizedRole = role.trim().uppercase()
+        if (normalizedRole !in setOf("OWNER", "CASHIER")) return@withConnection null
+        val scopedOutletId = normalizeOutletId(outletId)
+        if (!usingTurso) connection.autoCommit = false
+        try {
+            purgeExpiredApiAuthPairingCodesTransactional(connection)
+            val now = Instant.now().toString()
+            val row = connection.prepareStatement(
+                """
+                SELECT pairing_code, role, outlet_id, expires_at
+                FROM api_auth_pairing_code
+                WHERE pairing_code = ?
+                  AND role = ?
+                  AND outlet_id = ?
+                  AND used_at IS NULL
+                  AND datetime(expires_at) > datetime(?)
+                LIMIT 1
+                """.trimIndent()
+            ).use { statement ->
+                statement.setString(1, normalizedCode)
+                statement.setString(2, normalizedRole)
+                statement.setString(3, scopedOutletId)
+                statement.setString(4, now)
+                statement.executeQuery().use { rs ->
+                    if (!rs.next()) return@use null
+                    ApiAuthPairingCodeRow(
+                        pairingCode = rs.getString("pairing_code"),
+                        role = rs.getString("role").orEmpty().trim().uppercase(),
+                        outletId = normalizeOutletId(rs.getString("outlet_id")),
+                        expiresAt = rs.getString("expires_at"),
+                    )
+                }
+            } ?: run {
+                if (!usingTurso) connection.commit()
+                return@withConnection null
+            }
+            connection.prepareStatement(
+                """
+                UPDATE api_auth_pairing_code
+                SET used_at = ?, used_by_session_id = ?, expires_at = ?
+                WHERE pairing_code = ? AND used_at IS NULL
+                """.trimIndent()
+            ).use { statement ->
+                statement.setString(1, now)
+                statement.setString(2, "redeemed")
+                statement.setString(3, now)
+                statement.setString(4, normalizedCode)
+                val updated = executeWriteCount(statement)
+                if (updated <= 0) {
+                    if (!usingTurso) connection.rollback()
+                    return@withConnection null
+                }
+            }
+            if (!usingTurso) connection.commit()
+            ServerAuthPairingCodeDto(
+                pairingCode = row.pairingCode,
+                role = row.role,
+                outletId = row.outletId,
+                issuedAt = now,
+                expiresAt = row.expiresAt,
+            )
+        } catch (t: Throwable) {
+            if (!usingTurso) connection.rollback()
+            throw t
+        } finally {
+            if (!usingTurso) connection.autoCommit = true
+        }
+    }
+
+    fun issueApiAuthSession(
+        role: String,
+        userId: String?,
+        userName: String?,
+        outletId: String?,
+        deviceId: String?,
+    ): ServerAuthSessionDto? = withConnection { connection ->
+        val normalizedRole = normalizeApiRoleOrNull(role) ?: return@withConnection null
+
+        val scopedOutletId = normalizeOutletId(outletId)
+        val normalizedUserId = normalizeApiUserId(userId)
+            ?: defaultUserIdForRole(normalizedRole)
+        val normalizedUserName = normalizeCatalogName(userName)
+            .ifBlank { defaultUserNameForRole(normalizedRole) }
+        val normalizedDeviceId = normalizeDeviceId(deviceId)
+        val now = Instant.now()
+        val issuedAt = now.toString()
+        val expiresAt = now.plusSeconds(apiSessionTtlSeconds).toString()
+        val sessionId = "sess_${UUID.randomUUID().toString().replace("-", "")}"
+        val accessToken = generateApiSessionToken()
+        if (!usingTurso) connection.autoCommit = false
+        try {
+            val resolvedAuthUser = resolveAuthUserForSessionTransactional(
+                connection = connection,
+                outletId = scopedOutletId,
+                role = normalizedRole,
+                requestedUserId = normalizedUserId,
+                requestedUserName = normalizedUserName,
+                nowIso = issuedAt,
+            ) ?: run {
+                if (!usingTurso) connection.rollback()
+                return@withConnection null
+            }
+            revokeUserSessionsTransactional(
+                connection = connection,
+                role = normalizedRole,
+                userId = resolvedAuthUser.userId,
+                outletId = scopedOutletId,
+                revokedAt = issuedAt,
+            )
+            connection.prepareStatement(
+                """
+                INSERT INTO api_auth_session(
+                    session_id,
+                    access_token,
+                    role,
+                    user_id,
+                    user_name,
+                    outlet_id,
+                    device_id,
+                    issued_at,
+                    expires_at,
+                    last_seen_at,
+                    revoked_at,
+                    created_at,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+                """.trimIndent()
+            ).use { statement ->
+                statement.setString(1, sessionId)
+                statement.setString(2, accessToken)
+                statement.setString(3, normalizedRole)
+                statement.setString(4, resolvedAuthUser.userId)
+                statement.setString(5, resolvedAuthUser.userName)
+                statement.setString(6, scopedOutletId)
+                statement.setString(7, normalizedDeviceId)
+                statement.setString(8, issuedAt)
+                statement.setString(9, expiresAt)
+                statement.setString(10, issuedAt)
+                statement.setString(11, issuedAt)
+                statement.setString(12, issuedAt)
+                executeWrite(statement)
+            }
+            touchAuthUserLastLoginTransactional(
+                connection = connection,
+                outletId = scopedOutletId,
+                role = normalizedRole,
+                userId = resolvedAuthUser.userId,
+                lastLoginAt = issuedAt,
+            )
+            recordAuthAuditLogTransactional(
+                connection = connection,
+                outletId = scopedOutletId,
+                actorRole = normalizedRole,
+                actorUserId = resolvedAuthUser.userId,
+                action = "SESSION_ISSUED",
+                targetType = "SESSION",
+                targetId = sessionId,
+                payloadJson = """{"device_id":${normalizedDeviceId?.let { "\"${it.replace("\"", "\\\"")}\"" } ?: "null"}}""",
+                createdAt = issuedAt,
+            )
+            if (!usingTurso) connection.commit()
+            ServerAuthSessionDto(
+                sessionId = sessionId,
+                accessToken = accessToken,
+                role = normalizedRole,
+                userId = resolvedAuthUser.userId,
+                userName = resolvedAuthUser.userName,
+                outletId = scopedOutletId,
+                issuedAt = issuedAt,
+                expiresAt = expiresAt,
+            )
+        } catch (t: Throwable) {
+            if (!usingTurso) connection.rollback()
+            throw t
+        } finally {
+            if (!usingTurso) connection.autoCommit = true
+        }
+    }
+
+    fun refreshApiAuthSession(
+        accessToken: String,
+        outletId: String?,
+        deviceId: String?,
+    ): ServerAuthSessionDto? = withConnection { connection ->
+        val token = accessToken.trim()
+        if (token.isBlank()) return@withConnection null
+        val session = findValidApiAuthSessionTransactional(connection, token) ?: return@withConnection null
+        val scopedOutletId = normalizeOutletId(outletId)
+        if (session.outletId != scopedOutletId) return@withConnection null
+
+        val normalizedDeviceId = normalizeDeviceId(deviceId)
+        if (
+            normalizedDeviceId != null &&
+            session.deviceId != null &&
+            !session.deviceId.equals(normalizedDeviceId, ignoreCase = true)
+        ) {
+            return@withConnection null
+        }
+
+        val now = Instant.now()
+        val refreshedAt = now.toString()
+        val nextExpiry = now.plusSeconds(apiSessionTtlSeconds).toString()
+        connection.prepareStatement(
+            """
+            UPDATE api_auth_session
+            SET expires_at = ?, last_seen_at = ?, updated_at = ?
+            WHERE session_id = ? AND revoked_at IS NULL
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, nextExpiry)
+            statement.setString(2, refreshedAt)
+            statement.setString(3, refreshedAt)
+            statement.setString(4, session.sessionId)
+            executeWrite(statement)
+        }
+        ServerAuthSessionDto(
+            sessionId = session.sessionId,
+            accessToken = session.accessToken,
+            role = session.role,
+            userId = session.userId,
+            userName = session.userName,
+            outletId = session.outletId,
+            issuedAt = session.issuedAt,
+            expiresAt = nextExpiry,
+        )
+    }
+
+    fun findValidApiAuthSession(accessToken: String): ServerAuthSessionDto? = withConnection { connection ->
+        val token = accessToken.trim()
+        if (token.isBlank()) return@withConnection null
+        val session = findValidApiAuthSessionTransactional(connection, token) ?: return@withConnection null
+        ServerAuthSessionDto(
+            sessionId = session.sessionId,
+            accessToken = session.accessToken,
+            role = session.role,
+            userId = session.userId,
+            userName = session.userName,
+            outletId = session.outletId,
+            issuedAt = session.issuedAt,
+            expiresAt = session.expiresAt,
+        )
+    }
+
+    fun revokeApiAuthSession(accessToken: String): Boolean = withConnection { connection ->
+        val token = accessToken.trim()
+        if (token.isBlank()) return@withConnection false
+        val now = Instant.now().toString()
+        connection.prepareStatement(
+            """
+            UPDATE api_auth_session
+            SET revoked_at = ?, updated_at = ?
+            WHERE access_token = ? AND revoked_at IS NULL
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, now)
+            statement.setString(2, now)
+            statement.setString(3, token)
+            executeWriteCount(statement) > 0
+        }
+    }
+
+    fun appendApiAuthAuditLog(
+        outletId: String,
+        actorRole: String?,
+        actorUserId: String?,
+        action: String,
+        targetType: String? = null,
+        targetId: String? = null,
+        payloadJson: String? = null,
+    ): Boolean = withConnection { connection ->
+        val scopedOutletId = normalizeOutletId(outletId)
+        val scopedAction = action.trim().uppercase()
+        if (scopedAction.isBlank()) return@withConnection false
+        recordAuthAuditLogTransactional(
+            connection = connection,
+            outletId = scopedOutletId,
+            actorRole = actorRole,
+            actorUserId = actorUserId,
+            action = scopedAction,
+            targetType = targetType,
+            targetId = targetId,
+            payloadJson = payloadJson,
+            createdAt = Instant.now().toString(),
+        )
+        true
+    }
+
     fun listMenu(outletId: String = DEFAULT_OUTLET_ID): List<MenuItem> = withConnection { connection ->
         val scopedOutletId = normalizeOutletId(outletId)
         connection.prepareStatement(
@@ -342,7 +1403,7 @@ object ServerDatabase {
             statement.executeQuery().use { rs ->
                 buildList {
                     while (rs.next()) {
-                        val itemName = rs.getString("name")
+                        val itemName = normalizeCatalogName(rs.getString("name")).ifBlank { "Item" }
                         val (resolvedGroupId, resolvedGroupName) = normalizeMenuGroup(
                             groupId = rs.getString("group_id"),
                             groupName = rs.getString("group_name"),
@@ -413,12 +1474,12 @@ object ServerDatabase {
     }
 
     fun upsertMenu(request: UpsertMenuItemRequest): MenuItem? = withConnection { connection ->
-        val name = request.name.trim()
+        val name = normalizeCatalogName(request.name)
         if (name.isBlank() || request.price < 0) return@withConnection null
         val outletId = normalizeOutletId(request.outletId)
         val id = request.id?.trim().takeUnless { it.isNullOrBlank() } ?: UUID.randomUUID().toString()
         val groupId = request.groupId?.trim()?.takeIf { it.isNotBlank() }
-        val groupName = request.groupName?.trim()?.takeIf { it.isNotBlank() }
+        val groupName = normalizeCatalogNameOrNull(request.groupName)
         val now = Instant.now().toString()
         connection.prepareStatement(
             """
@@ -457,7 +1518,7 @@ object ServerDatabase {
 
     fun upsertModifierGroup(request: UpsertModifierGroupRequest): Boolean = withConnection { connection ->
         val groupId = request.id.trim()
-        val name = request.name.trim()
+        val name = normalizeCatalogName(request.name)
         if (groupId.isBlank() || name.isBlank()) return@withConnection false
         val outletId = normalizeOutletId(request.outletId)
         val selectionType = request.selectionType.trim().uppercase().ifBlank { "SINGLE" }
@@ -503,9 +1564,11 @@ object ServerDatabase {
             ).use { statement ->
                 request.options.forEachIndexed { index, option ->
                     val optionId = option.id.trim().ifBlank { "$groupId-opt-$index" }
+                    val optionName = normalizeCatalogName(option.name)
+                        .ifBlank { normalizeCatalogName("Option ${index + 1}") }
                     statement.setString(1, optionId)
                     statement.setString(2, groupId)
-                    statement.setString(3, option.name.trim().ifBlank { "Option ${index + 1}" })
+                    statement.setString(3, optionName)
                     statement.setLong(4, option.priceDelta)
                     statement.setLong(5, option.order.toLong())
                     statement.setLong(6, if (option.isDefault) 1L else 0L)
@@ -722,6 +1785,180 @@ object ServerDatabase {
             throw t
         } finally {
             if (!usingTurso) connection.autoCommit = true
+        }
+    }
+
+    fun createReservation(request: CreateReservationRequest): ReservationView? = withConnection { connection ->
+        if (!usingTurso) connection.autoCommit = false
+        try {
+            val outletId = normalizeOutletId(request.resolvedOutletId())
+            val customerName = request.resolvedCustomerName().trim()
+            val reservationTimestamp = resolveReservationTimestampInput(request) ?: return@withConnection null
+            if (customerName.isBlank()) return@withConnection null
+
+            val now = Instant.now().toString()
+            val reservationId = "RSV-${UUID.randomUUID().toString().substringBefore('-').uppercase()}"
+            val normalizedPartySize = request.resolvedPartySize().coerceAtLeast(1)
+            val normalizedPhone = request.phone?.trim().orEmpty()
+
+            connection.prepareStatement(
+                """
+                INSERT INTO cafe_reservation(
+                    id, customer_name, phone, party_size, reservation_at, status, note, outlet_id, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """.trimIndent()
+            ).use { statement ->
+                statement.setString(1, reservationId)
+                statement.setString(2, customerName)
+                statement.setString(3, normalizedPhone.ifBlank { null })
+                statement.setInt(4, normalizedPartySize)
+                statement.setString(5, reservationTimestamp.iso)
+                statement.setString(6, "PENDING")
+                statement.setString(7, request.note?.trim()?.takeIf { it.isNotBlank() })
+                statement.setString(8, outletId)
+                statement.setString(9, now)
+                statement.setString(10, now)
+                executeWrite(statement)
+            }
+
+            if (!usingTurso) connection.commit()
+            ReservationView(
+                id = reservationId,
+                customerName = customerName,
+                phone = normalizedPhone.ifBlank { null },
+                partySize = normalizedPartySize,
+                reservationAt = reservationTimestamp.iso,
+                reservationDate = reservationTimestamp.date,
+                reservationTime = reservationTimestamp.time,
+                status = "PENDING",
+                note = request.note?.trim()?.takeIf { it.isNotBlank() },
+                outletId = outletId,
+                createdAt = now,
+                updatedAt = now,
+            )
+        } catch (t: Throwable) {
+            if (!usingTurso) connection.rollback()
+            throw t
+        } finally {
+            if (!usingTurso) connection.autoCommit = true
+        }
+    }
+
+    fun listReservations(
+        statuses: Set<String>,
+        outletId: String = DEFAULT_OUTLET_ID,
+    ): List<ReservationView> = withConnection { connection ->
+        val scopedOutletId = normalizeOutletId(outletId)
+        val statusFilter = statuses
+            .map { it.trim().uppercase() }
+            .filter { it.isNotBlank() }
+            .toSet()
+
+        val sql = buildString {
+            append(
+                """
+                SELECT id, customer_name, phone, party_size, reservation_at, status, note, outlet_id, created_at, updated_at
+                FROM cafe_reservation
+                WHERE outlet_id = ?
+                """.trimIndent()
+            )
+            if (statusFilter.isNotEmpty()) {
+                append(" AND status IN (${statusFilter.joinToString(",") { "?" }})")
+            }
+            append(" ORDER BY reservation_at ASC, created_at ASC")
+        }
+
+        connection.prepareStatement(sql).use { statement ->
+            statement.setString(1, scopedOutletId)
+            statusFilter.forEachIndexed { index, status ->
+                statement.setString(index + 2, status)
+            }
+            statement.executeQuery().use { rs ->
+                buildList {
+                    while (rs.next()) {
+                        val reservationTimestamp = parseReservationTimestamp(
+                            rs.getString("reservation_at").orEmpty()
+                        ) ?: continue
+                        add(
+                            ReservationView(
+                                id = rs.getString("id"),
+                                customerName = rs.getString("customer_name"),
+                                phone = rs.getString("phone"),
+                                partySize = rs.getInt("party_size"),
+                                reservationAt = reservationTimestamp.iso,
+                                reservationDate = reservationTimestamp.date,
+                                reservationTime = reservationTimestamp.time,
+                                status = rs.getString("status"),
+                                note = rs.getString("note"),
+                                outletId = rs.getString("outlet_id") ?: DEFAULT_OUTLET_ID,
+                                createdAt = rs.getString("created_at"),
+                                updatedAt = rs.getString("updated_at"),
+                            )
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fun updateReservationStatus(
+        reservationId: String,
+        status: String,
+        outletId: String = DEFAULT_OUTLET_ID,
+    ): ReservationView? = withConnection { connection ->
+        val scopedOutletId = normalizeOutletId(outletId)
+        val normalizedStatus = status.trim().uppercase()
+        if (normalizedStatus !in setOf("PENDING", "CONFIRMED", "SEATED", "COMPLETED", "CANCELLED")) {
+            return@withConnection null
+        }
+
+        val now = Instant.now().toString()
+        connection.prepareStatement(
+            """
+            UPDATE cafe_reservation
+            SET status = ?, updated_at = ?
+            WHERE id = ? AND outlet_id = ?
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, normalizedStatus)
+            statement.setString(2, now)
+            statement.setString(3, reservationId)
+            statement.setString(4, scopedOutletId)
+            val updated = executeWriteCount(statement)
+            if (updated == 0) return@withConnection null
+        }
+
+        connection.prepareStatement(
+            """
+            SELECT id, customer_name, phone, party_size, reservation_at, status, note, outlet_id, created_at, updated_at
+            FROM cafe_reservation
+            WHERE id = ? AND outlet_id = ?
+            LIMIT 1
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, reservationId)
+            statement.setString(2, scopedOutletId)
+            statement.executeQuery().use { rs ->
+                if (!rs.next()) return@withConnection null
+                val reservationTimestamp = parseReservationTimestamp(
+                    rs.getString("reservation_at").orEmpty()
+                ) ?: return@withConnection null
+                ReservationView(
+                    id = rs.getString("id"),
+                    customerName = rs.getString("customer_name"),
+                    phone = rs.getString("phone"),
+                    partySize = rs.getInt("party_size"),
+                    reservationAt = reservationTimestamp.iso,
+                    reservationDate = reservationTimestamp.date,
+                    reservationTime = reservationTimestamp.time,
+                    status = rs.getString("status"),
+                    note = rs.getString("note"),
+                    outletId = rs.getString("outlet_id") ?: DEFAULT_OUTLET_ID,
+                    createdAt = rs.getString("created_at"),
+                    updatedAt = rs.getString("updated_at"),
+                )
+            }
         }
     }
 
@@ -1023,6 +2260,17 @@ object ServerDatabase {
             )
             statement.execute(
                 """
+                CREATE TABLE IF NOT EXISTS outlet (
+                    outlet_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    is_active INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """.trimIndent()
+            )
+            statement.execute(
+                """
                 CREATE TABLE IF NOT EXISTS menu_item (
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
@@ -1122,6 +2370,22 @@ object ServerDatabase {
             runCatching {
                 statement.execute("ALTER TABLE order_item ADD COLUMN note TEXT")
             }
+            statement.execute(
+                """
+                CREATE TABLE IF NOT EXISTS cafe_reservation (
+                    id TEXT PRIMARY KEY,
+                    customer_name TEXT NOT NULL,
+                    phone TEXT,
+                    party_size INTEGER NOT NULL,
+                    reservation_at TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    note TEXT,
+                    outlet_id TEXT NOT NULL DEFAULT 'default',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """.trimIndent()
+            )
             statement.execute(
                 """
                 CREATE TABLE IF NOT EXISTS transaksi_header (
@@ -1262,14 +2526,81 @@ object ServerDatabase {
                 )
                 """.trimIndent()
             )
+            statement.execute(
+                """
+                CREATE TABLE IF NOT EXISTS api_auth_session (
+                    session_id TEXT PRIMARY KEY,
+                    access_token TEXT NOT NULL UNIQUE,
+                    role TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    user_name TEXT NOT NULL,
+                    outlet_id TEXT NOT NULL DEFAULT 'default',
+                    device_id TEXT,
+                    issued_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    last_seen_at TEXT NOT NULL,
+                    revoked_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """.trimIndent()
+            )
+            statement.execute(
+                """
+                CREATE TABLE IF NOT EXISTS api_auth_pairing_code (
+                    pairing_code TEXT PRIMARY KEY,
+                    role TEXT NOT NULL,
+                    outlet_id TEXT NOT NULL DEFAULT 'default',
+                    issued_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    used_at TEXT,
+                    used_by_session_id TEXT
+                )
+                """.trimIndent()
+            )
+            statement.execute(
+                """
+                CREATE TABLE IF NOT EXISTS api_auth_user (
+                    user_id TEXT NOT NULL,
+                    user_name TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    outlet_id TEXT NOT NULL DEFAULT 'default',
+                    is_active INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    last_login_at TEXT,
+                    PRIMARY KEY (outlet_id, role, user_id)
+                )
+                """.trimIndent()
+            )
+            statement.execute(
+                """
+                CREATE TABLE IF NOT EXISTS api_auth_audit_log (
+                    id TEXT PRIMARY KEY,
+                    outlet_id TEXT NOT NULL DEFAULT 'default',
+                    actor_role TEXT,
+                    actor_user_id TEXT,
+                    action TEXT NOT NULL,
+                    target_type TEXT,
+                    target_id TEXT,
+                    payload_json TEXT,
+                    created_at TEXT NOT NULL
+                )
+                """.trimIndent()
+            )
             runCatching {
                 statement.execute("ALTER TABLE processed_event ADD COLUMN outlet_id TEXT NOT NULL DEFAULT 'default'")
             }
+            runCatching {
+                statement.execute("ALTER TABLE outlet ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
+            }
             statement.execute("CREATE INDEX IF NOT EXISTS idx_menu_item_outlet_name ON menu_item(outlet_id, name)")
+            statement.execute("CREATE INDEX IF NOT EXISTS idx_outlet_active ON outlet(is_active, outlet_id)")
             statement.execute("CREATE INDEX IF NOT EXISTS idx_modifier_group_outlet_name ON modifier_group(outlet_id, nama)")
             statement.execute("CREATE INDEX IF NOT EXISTS idx_modifier_option_group_order ON modifier_option(id_modifier_group, outlet_id, urutan)")
             statement.execute("CREATE INDEX IF NOT EXISTS idx_product_modifier_item_outlet ON product_modifier_group(id_item, outlet_id)")
             statement.execute("CREATE INDEX IF NOT EXISTS idx_order_header_outlet_status_date ON order_header(outlet_id, status, created_at)")
+            statement.execute("CREATE INDEX IF NOT EXISTS idx_reservation_outlet_status_date ON cafe_reservation(outlet_id, status, reservation_at)")
             statement.execute("CREATE INDEX IF NOT EXISTS idx_transaksi_header_outlet_date ON transaksi_header(outlet_id, created_at)")
             statement.execute("CREATE INDEX IF NOT EXISTS idx_pembayaran_outlet_date ON pembayaran(outlet_id, paid_at)")
             statement.execute("CREATE INDEX IF NOT EXISTS idx_processed_event_outlet_event ON processed_event(outlet_id, event_id)")
@@ -1279,6 +2610,13 @@ object ServerDatabase {
             statement.execute("CREATE INDEX IF NOT EXISTS idx_cash_session_outlet_status_opened ON cash_session(outlet_id, status, opened_at)")
             statement.execute("CREATE INDEX IF NOT EXISTS idx_cash_movement_session_type_date ON cash_movement(session_id, movement_type, created_at)")
             statement.execute("CREATE INDEX IF NOT EXISTS idx_cash_movement_outlet_date ON cash_movement(outlet_id, created_at)")
+            statement.execute("CREATE INDEX IF NOT EXISTS idx_api_auth_session_outlet_role_user ON api_auth_session(outlet_id, role, user_id)")
+            statement.execute("CREATE INDEX IF NOT EXISTS idx_api_auth_session_access_token ON api_auth_session(access_token)")
+            statement.execute("CREATE INDEX IF NOT EXISTS idx_api_auth_session_expires ON api_auth_session(expires_at)")
+            statement.execute("CREATE INDEX IF NOT EXISTS idx_api_auth_pairing_outlet_role ON api_auth_pairing_code(outlet_id, role)")
+            statement.execute("CREATE INDEX IF NOT EXISTS idx_api_auth_pairing_expires ON api_auth_pairing_code(expires_at)")
+            statement.execute("CREATE INDEX IF NOT EXISTS idx_api_auth_user_outlet_role_active ON api_auth_user(outlet_id, role, is_active)")
+            statement.execute("CREATE INDEX IF NOT EXISTS idx_api_auth_audit_outlet_created ON api_auth_audit_log(outlet_id, created_at)")
         }
     }
 
@@ -1292,6 +2630,15 @@ object ServerDatabase {
                 uuid TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 created_at TEXT NOT NULL
+            )
+            """.trimIndent(),
+            """
+            CREATE TABLE IF NOT EXISTS outlet (
+                outlet_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             )
             """.trimIndent(),
             """
@@ -1362,6 +2709,20 @@ object ServerDatabase {
                 line_total INTEGER NOT NULL,
                 note TEXT,
                 FOREIGN KEY (order_id) REFERENCES order_header(id) ON DELETE CASCADE
+            )
+            """.trimIndent(),
+            """
+            CREATE TABLE IF NOT EXISTS cafe_reservation (
+                id TEXT PRIMARY KEY,
+                customer_name TEXT NOT NULL,
+                phone TEXT,
+                party_size INTEGER NOT NULL,
+                reservation_at TEXT NOT NULL,
+                status TEXT NOT NULL,
+                note TEXT,
+                outlet_id TEXT NOT NULL DEFAULT 'default',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             )
             """.trimIndent(),
             """
@@ -1471,10 +2832,65 @@ object ServerDatabase {
                 processed_at TEXT NOT NULL
             )
             """.trimIndent(),
+            """
+            CREATE TABLE IF NOT EXISTS api_auth_session (
+                session_id TEXT PRIMARY KEY,
+                access_token TEXT NOT NULL UNIQUE,
+                role TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                user_name TEXT NOT NULL,
+                outlet_id TEXT NOT NULL DEFAULT 'default',
+                device_id TEXT,
+                issued_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                revoked_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """.trimIndent(),
+            """
+            CREATE TABLE IF NOT EXISTS api_auth_pairing_code (
+                pairing_code TEXT PRIMARY KEY,
+                role TEXT NOT NULL,
+                outlet_id TEXT NOT NULL DEFAULT 'default',
+                issued_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                used_at TEXT,
+                used_by_session_id TEXT
+            )
+            """.trimIndent(),
+            """
+            CREATE TABLE IF NOT EXISTS api_auth_user (
+                user_id TEXT NOT NULL,
+                user_name TEXT NOT NULL,
+                role TEXT NOT NULL,
+                outlet_id TEXT NOT NULL DEFAULT 'default',
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                last_login_at TEXT,
+                PRIMARY KEY (outlet_id, role, user_id)
+            )
+            """.trimIndent(),
+            """
+            CREATE TABLE IF NOT EXISTS api_auth_audit_log (
+                id TEXT PRIMARY KEY,
+                outlet_id TEXT NOT NULL DEFAULT 'default',
+                actor_role TEXT,
+                actor_user_id TEXT,
+                action TEXT NOT NULL,
+                target_type TEXT,
+                target_id TEXT,
+                payload_json TEXT,
+                created_at TEXT NOT NULL
+            )
+            """.trimIndent(),
         )
 
         val migrationStatements = listOf(
             "ALTER TABLE order_header ADD COLUMN payment_confirmation TEXT",
+            "ALTER TABLE outlet ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1",
             "ALTER TABLE menu_item ADD COLUMN outlet_id TEXT NOT NULL DEFAULT 'default'",
             "ALTER TABLE menu_item ADD COLUMN group_id TEXT",
             "ALTER TABLE menu_item ADD COLUMN group_name TEXT",
@@ -1489,11 +2905,13 @@ object ServerDatabase {
         )
 
         val indexStatements = listOf(
+            "CREATE INDEX IF NOT EXISTS idx_outlet_active ON outlet(is_active, outlet_id)",
             "CREATE INDEX IF NOT EXISTS idx_menu_item_outlet_name ON menu_item(outlet_id, name)",
             "CREATE INDEX IF NOT EXISTS idx_modifier_group_outlet_name ON modifier_group(outlet_id, nama)",
             "CREATE INDEX IF NOT EXISTS idx_modifier_option_group_order ON modifier_option(id_modifier_group, outlet_id, urutan)",
             "CREATE INDEX IF NOT EXISTS idx_product_modifier_item_outlet ON product_modifier_group(id_item, outlet_id)",
             "CREATE INDEX IF NOT EXISTS idx_order_header_outlet_status_date ON order_header(outlet_id, status, created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_reservation_outlet_status_date ON cafe_reservation(outlet_id, status, reservation_at)",
             "CREATE INDEX IF NOT EXISTS idx_transaksi_header_outlet_date ON transaksi_header(outlet_id, created_at)",
             "CREATE INDEX IF NOT EXISTS idx_pembayaran_outlet_date ON pembayaran(outlet_id, paid_at)",
             "CREATE INDEX IF NOT EXISTS idx_processed_event_outlet_event ON processed_event(outlet_id, event_id)",
@@ -1503,6 +2921,13 @@ object ServerDatabase {
             "CREATE INDEX IF NOT EXISTS idx_cash_session_outlet_status_opened ON cash_session(outlet_id, status, opened_at)",
             "CREATE INDEX IF NOT EXISTS idx_cash_movement_session_type_date ON cash_movement(session_id, movement_type, created_at)",
             "CREATE INDEX IF NOT EXISTS idx_cash_movement_outlet_date ON cash_movement(outlet_id, created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_api_auth_session_outlet_role_user ON api_auth_session(outlet_id, role, user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_api_auth_session_access_token ON api_auth_session(access_token)",
+            "CREATE INDEX IF NOT EXISTS idx_api_auth_session_expires ON api_auth_session(expires_at)",
+            "CREATE INDEX IF NOT EXISTS idx_api_auth_pairing_outlet_role ON api_auth_pairing_code(outlet_id, role)",
+            "CREATE INDEX IF NOT EXISTS idx_api_auth_pairing_expires ON api_auth_pairing_code(expires_at)",
+            "CREATE INDEX IF NOT EXISTS idx_api_auth_user_outlet_role_active ON api_auth_user(outlet_id, role, is_active)",
+            "CREATE INDEX IF NOT EXISTS idx_api_auth_audit_outlet_created ON api_auth_audit_log(outlet_id, created_at)",
         )
 
         connection.createStatement().use { statement ->
@@ -1555,13 +2980,391 @@ object ServerDatabase {
         }
     }
 
+    private fun findValidApiAuthSessionTransactional(
+        connection: Connection,
+        accessToken: String,
+    ): ApiAuthSessionRow? {
+        val now = Instant.now().toString()
+        connection.prepareStatement(
+            """
+            SELECT session_id, access_token, role, user_id, user_name, outlet_id, device_id, issued_at, expires_at, last_seen_at, revoked_at
+            FROM api_auth_session
+            WHERE access_token = ?
+              AND revoked_at IS NULL
+              AND datetime(expires_at) > datetime(?)
+            LIMIT 1
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, accessToken)
+            statement.setString(2, now)
+            statement.executeQuery().use { rs ->
+                if (!rs.next()) return null
+                val role = rs.getString("role").orEmpty().trim().uppercase()
+                if (role !in setOf("OWNER", "CASHIER")) return null
+                return ApiAuthSessionRow(
+                    sessionId = rs.getString("session_id"),
+                    accessToken = rs.getString("access_token"),
+                    role = role,
+                    userId = rs.getString("user_id"),
+                    userName = rs.getString("user_name"),
+                    outletId = normalizeOutletId(rs.getString("outlet_id")),
+                    deviceId = rs.getString("device_id")?.trim()?.ifBlank { null },
+                    issuedAt = rs.getString("issued_at"),
+                    expiresAt = rs.getString("expires_at"),
+                    lastSeenAt = rs.getString("last_seen_at")?.trim()?.ifBlank { null },
+                    revokedAt = rs.getString("revoked_at")?.trim()?.ifBlank { null },
+                )
+            }
+        }
+    }
+
+    private fun findAuthUserTransactional(
+        connection: Connection,
+        outletId: String,
+        role: String,
+        userId: String,
+        activeOnly: Boolean = false,
+    ): ApiAuthUserRow? {
+        val sql = buildString {
+            append(
+                """
+                SELECT user_id, user_name, role, outlet_id, is_active, created_at, updated_at, last_login_at
+                FROM api_auth_user
+                WHERE outlet_id = ? AND role = ? AND user_id = ?
+                """.trimIndent()
+            )
+            if (activeOnly) {
+                append(" AND is_active = 1")
+            }
+            append(" LIMIT 1")
+        }
+        connection.prepareStatement(sql).use { statement ->
+            statement.setString(1, outletId)
+            statement.setString(2, role)
+            statement.setString(3, userId)
+            statement.executeQuery().use { rs ->
+                if (!rs.next()) return null
+                return ApiAuthUserRow(
+                    userId = rs.getString("user_id").orEmpty(),
+                    userName = rs.getString("user_name").orEmpty(),
+                    role = rs.getString("role").orEmpty().trim().uppercase(),
+                    outletId = normalizeOutletId(rs.getString("outlet_id")),
+                    active = rs.getInt("is_active") == 1,
+                    createdAt = rs.getString("created_at"),
+                    updatedAt = rs.getString("updated_at"),
+                    lastLoginAt = rs.getString("last_login_at")?.trim()?.ifBlank { null },
+                )
+            }
+        }
+    }
+
+    private fun upsertAuthUserTransactional(
+        connection: Connection,
+        outletId: String,
+        role: String,
+        userId: String,
+        userName: String,
+        active: Boolean,
+        nowIso: String,
+    ) {
+        connection.prepareStatement(
+            """
+            INSERT INTO api_auth_user(
+                user_id, user_name, role, outlet_id, is_active, created_at, updated_at, last_login_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
+            ON CONFLICT(outlet_id, role, user_id) DO UPDATE SET
+                user_name = excluded.user_name,
+                is_active = excluded.is_active,
+                updated_at = excluded.updated_at
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, userId)
+            statement.setString(2, userName)
+            statement.setString(3, role)
+            statement.setString(4, outletId)
+            statement.setInt(5, if (active) 1 else 0)
+            statement.setString(6, nowIso)
+            statement.setString(7, nowIso)
+            executeWrite(statement)
+        }
+    }
+
+    private fun touchAuthUserLastLoginTransactional(
+        connection: Connection,
+        outletId: String,
+        role: String,
+        userId: String,
+        lastLoginAt: String,
+    ) {
+        connection.prepareStatement(
+            """
+            UPDATE api_auth_user
+            SET last_login_at = ?, updated_at = ?
+            WHERE outlet_id = ? AND role = ? AND user_id = ?
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, lastLoginAt)
+            statement.setString(2, lastLoginAt)
+            statement.setString(3, outletId)
+            statement.setString(4, role)
+            statement.setString(5, userId)
+            executeWrite(statement)
+        }
+    }
+
+    private fun ensureDefaultAuthUsersForOutletTransactional(
+        connection: Connection,
+        outletId: String,
+        nowIso: String = Instant.now().toString(),
+    ) {
+        upsertAuthUserTransactional(
+            connection = connection,
+            outletId = outletId,
+            role = "OWNER",
+            userId = defaultUserIdForRole("OWNER"),
+            userName = defaultUserNameForRole("OWNER"),
+            active = true,
+            nowIso = nowIso,
+        )
+        upsertAuthUserTransactional(
+            connection = connection,
+            outletId = outletId,
+            role = "CASHIER",
+            userId = defaultUserIdForRole("CASHIER"),
+            userName = defaultUserNameForRole("CASHIER"),
+            active = true,
+            nowIso = nowIso,
+        )
+    }
+
+    private fun resolveAuthUserForSessionTransactional(
+        connection: Connection,
+        outletId: String,
+        role: String,
+        requestedUserId: String,
+        requestedUserName: String,
+        nowIso: String,
+    ): ApiAuthUserRow? {
+        val existing = findAuthUserTransactional(
+            connection = connection,
+            outletId = outletId,
+            role = role,
+            userId = requestedUserId,
+            activeOnly = false,
+        )
+        if (existing != null) {
+            if (!existing.active) return null
+            if (requestedUserName.isNotBlank() && requestedUserName != existing.userName) {
+                upsertAuthUserTransactional(
+                    connection = connection,
+                    outletId = outletId,
+                    role = role,
+                    userId = requestedUserId,
+                    userName = requestedUserName,
+                    active = true,
+                    nowIso = nowIso,
+                )
+            }
+            return findAuthUserTransactional(
+                connection = connection,
+                outletId = outletId,
+                role = role,
+                userId = requestedUserId,
+                activeOnly = true,
+            )
+        }
+        upsertAuthUserTransactional(
+            connection = connection,
+            outletId = outletId,
+            role = role,
+            userId = requestedUserId,
+            userName = requestedUserName.ifBlank { defaultUserNameForRole(role) },
+            active = true,
+            nowIso = nowIso,
+        )
+        return findAuthUserTransactional(
+            connection = connection,
+            outletId = outletId,
+            role = role,
+            userId = requestedUserId,
+            activeOnly = true,
+        )
+    }
+
+    private fun recordAuthAuditLogTransactional(
+        connection: Connection,
+        outletId: String,
+        actorRole: String?,
+        actorUserId: String?,
+        action: String,
+        targetType: String?,
+        targetId: String?,
+        payloadJson: String?,
+        createdAt: String,
+    ) {
+        connection.prepareStatement(
+            """
+            INSERT INTO api_auth_audit_log(
+                id, outlet_id, actor_role, actor_user_id, action, target_type, target_id, payload_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, "audit_${UUID.randomUUID().toString().replace("-", "")}")
+            statement.setString(2, outletId)
+            statement.setString(3, actorRole?.trim()?.uppercase()?.ifBlank { null })
+            statement.setString(4, actorUserId?.trim()?.ifBlank { null })
+            statement.setString(5, action.trim().uppercase())
+            statement.setString(6, targetType?.trim()?.uppercase()?.ifBlank { null })
+            statement.setString(7, targetId?.trim()?.ifBlank { null })
+            statement.setString(8, payloadJson?.trim()?.ifBlank { null })
+            statement.setString(9, createdAt)
+            executeWrite(statement)
+        }
+    }
+
+    private fun revokeUserSessionsTransactional(
+        connection: Connection,
+        role: String,
+        userId: String,
+        outletId: String,
+        revokedAt: String,
+    ) {
+        connection.prepareStatement(
+            """
+            UPDATE api_auth_session
+            SET revoked_at = ?, updated_at = ?
+            WHERE role = ? AND user_id = ? AND outlet_id = ? AND revoked_at IS NULL
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, revokedAt)
+            statement.setString(2, revokedAt)
+            statement.setString(3, role)
+            statement.setString(4, userId)
+            statement.setString(5, outletId)
+            executeWrite(statement)
+        }
+    }
+
     private fun isMissingTableError(cause: Throwable, tableName: String): Boolean {
         val message = cause.message?.lowercase().orEmpty()
         return message.contains("no such table") && message.contains(tableName.lowercase())
     }
 
+    private fun isDuplicateKeyError(cause: Throwable): Boolean {
+        val message = cause.message?.lowercase().orEmpty()
+        return message.contains("unique") ||
+            message.contains("duplicate") ||
+            message.contains("constraint")
+    }
+
+    private fun normalizeApiRoleOrNull(value: String?): String? {
+        val normalized = value.orEmpty().trim().uppercase()
+        return when (normalized) {
+            "OWNER", "CASHIER" -> normalized
+            else -> null
+        }
+    }
+
+    private fun normalizeApiUserId(value: String?): String? {
+        return value.orEmpty()
+            .trim()
+            .replace(Regex("\\s+"), "_")
+            .replace(Regex("[^A-Za-z0-9_.-]"), "")
+            .take(64)
+            .ifBlank { null }
+    }
+
+    private fun normalizeDeviceId(value: String?): String? {
+        return value
+            ?.trim()
+            ?.take(128)
+            ?.ifBlank { null }
+    }
+
+    private fun defaultUserIdForRole(role: String): String {
+        return if (role == "OWNER") "owner" else "cashier"
+    }
+
+    private fun defaultUserNameForRole(role: String): String {
+        return if (role == "OWNER") "Owner" else "Cashier"
+    }
+
+    private fun ApiAuthUserRow.toDto(): ServerAuthUserDto {
+        return ServerAuthUserDto(
+            userId = userId,
+            userName = userName,
+            role = role,
+            outletId = outletId,
+            active = active,
+            createdAt = createdAt,
+            updatedAt = updatedAt,
+            lastLoginAt = lastLoginAt,
+        )
+    }
+
+    private fun resolvePairingTtlSeconds(ttlSeconds: Long?): Long {
+        val resolved = ttlSeconds ?: apiPairingTtlSeconds
+        return if (resolved <= 0L) {
+            0L
+        } else {
+            resolved.coerceIn(MIN_API_PAIRING_TTL_SECONDS, MAX_API_PAIRING_TTL_SECONDS)
+        }
+    }
+
+    private fun purgeExpiredApiAuthPairingCodesTransactional(connection: Connection) {
+        val now = Instant.now().toString()
+        connection.prepareStatement(
+            """
+            DELETE FROM api_auth_pairing_code
+            WHERE used_at IS NOT NULL OR datetime(expires_at) <= datetime(?)
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, now)
+            executeWrite(statement)
+        }
+    }
+
+    private fun generateApiPairingCode(): String {
+        val alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+        val codeLength = 8
+        return buildString(codeLength) {
+            repeat(codeLength) {
+                val index = secureRandom.nextInt(alphabet.length)
+                append(alphabet[index])
+            }
+        }
+    }
+
+    private fun generateApiSessionToken(): String {
+        val randomBytes = ByteArray(48)
+        secureRandom.nextBytes(randomBytes)
+        return Base64
+            .getUrlEncoder()
+            .withoutPadding()
+            .encodeToString(randomBytes)
+    }
+
+    private fun normalizeCatalogName(value: String?): String {
+        val asciiOnly = buildString {
+            value.orEmpty().forEach { ch ->
+                when {
+                    ch.code in 32..126 -> append(ch)
+                    ch.isWhitespace() -> append(' ')
+                }
+            }
+        }
+        return asciiOnly
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .take(MAX_CATALOG_NAME_LENGTH)
+    }
+
+    private fun normalizeCatalogNameOrNull(value: String?): String? {
+        return normalizeCatalogName(value).ifBlank { null }
+    }
+
     private fun normalizeMenuGroup(groupId: String?, groupName: String?, itemName: String): Pair<String, String> {
-        val normalizedName = groupName?.trim().orEmpty()
+        val normalizedName = normalizeCatalogName(groupName)
         val validName = normalizedName.takeIf {
             it.isNotBlank() && !it.equals("Kategori", ignoreCase = true)
         } ?: inferMenuGroupName(itemName)
@@ -1650,7 +3453,7 @@ object ServerDatabase {
         val seeded = ArrayList<Customer>(clampedCount)
         for (index in 1..clampedCount) {
             val tableName = "Table ${index.toString().padStart(2, '0')}"
-            val tableUuid = UUID.nameUUIDFromBytes("table:$normalizedOutletId:$index".toByteArray()).toString()
+            val tableUuid = seededTableUuid(normalizedOutletId, index)
             val existing = findCustomerTransactional(connection, tableUuid)
             if (existing == null) {
                 val now = Instant.now().toString()
@@ -1688,6 +3491,20 @@ object ServerDatabase {
         return seeded
     }
 
+    private fun seededTableUuid(outletId: String, index: Int): String {
+        return UUID.nameUUIDFromBytes("table:$outletId:$index".toByteArray()).toString()
+    }
+
+    private fun seededTableIndex(outletId: String, uuid: String, maxCount: Int): Int? {
+        val clampedCount = maxCount.coerceIn(1, 500)
+        for (index in 1..clampedCount) {
+            if (seededTableUuid(outletId, index) == uuid) {
+                return index
+            }
+        }
+        return null
+    }
+
     private fun listMenuTransactional(connection: Connection, outletId: String): List<MenuItem> {
         connection.prepareStatement(
             """
@@ -1700,7 +3517,7 @@ object ServerDatabase {
             statement.executeQuery().use { rs ->
                 return buildList {
                     while (rs.next()) {
-                        val itemName = rs.getString("name")
+                        val itemName = normalizeCatalogName(rs.getString("name")).ifBlank { "Item" }
                         val (resolvedGroupId, resolvedGroupName) = normalizeMenuGroup(
                             groupId = rs.getString("group_id"),
                             groupName = rs.getString("group_name"),
@@ -1748,7 +3565,7 @@ object ServerDatabase {
                         add(
                             ModifierGroupRow(
                                 id = rs.getString("id_modifier_group"),
-                                name = rs.getString("nama"),
+                                name = normalizeCatalogName(rs.getString("nama")).ifBlank { "Modifier" },
                                 selectionType = rs.getString("selection_type").orEmpty().ifBlank { "SINGLE" },
                                 isRequired = rs.getLong("is_required") == 1L,
                                 maxSelection = rs.getInt("max_selection").coerceAtLeast(1),
@@ -1777,7 +3594,7 @@ object ServerDatabase {
                             ModifierOptionRow(
                                 id = rs.getString("id_modifier_option"),
                                 groupId = rs.getString("id_modifier_group"),
-                                name = rs.getString("nama"),
+                                name = normalizeCatalogName(rs.getString("nama")).ifBlank { "Option" },
                                 priceDelta = rs.getLong("price_delta"),
                                 order = rs.getInt("urutan"),
                                 isDefault = rs.getLong("is_default") == 1L,
@@ -1949,6 +3766,7 @@ object ServerDatabase {
                 )
             }
         }
+        if (order.total <= 0L) return
 
         connection.prepareStatement(
             """
@@ -2271,8 +4089,167 @@ object ServerDatabase {
         }
     }
 
+    private fun findOutletTransactional(
+        connection: Connection,
+        outletId: String,
+    ): OutletProfile? {
+        connection.prepareStatement(
+            """
+            SELECT outlet_id, name, is_active, created_at, updated_at
+            FROM outlet
+            WHERE outlet_id = ?
+            LIMIT 1
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, outletId)
+            statement.executeQuery().use { rs ->
+                if (!rs.next()) return null
+                return OutletProfile(
+                    outletId = normalizeOutletId(rs.getString("outlet_id")),
+                    name = rs.getString("name").orEmpty().ifBlank { "Outlet" },
+                    active = (rs.getInt("is_active") == 1),
+                    createdAt = rs.getString("created_at"),
+                    updatedAt = rs.getString("updated_at"),
+                )
+            }
+        }
+    }
+
+    private fun ensureOutletTransactional(
+        connection: Connection,
+        outletId: String,
+        name: String,
+        active: Boolean,
+        nowIso: String = Instant.now().toString(),
+    ) {
+        val scopedOutletId = normalizeOutletId(outletId)
+        val scopedName = normalizeCatalogName(name).ifBlank { "Outlet $scopedOutletId" }
+        connection.prepareStatement(
+            """
+            INSERT INTO outlet(outlet_id, name, is_active, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(outlet_id) DO UPDATE SET
+                name = excluded.name,
+                is_active = excluded.is_active,
+                updated_at = excluded.updated_at
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, scopedOutletId)
+            statement.setString(2, scopedName)
+            statement.setInt(3, if (active) 1 else 0)
+            statement.setString(4, nowIso)
+            statement.setString(5, nowIso)
+            executeWrite(statement)
+        }
+        ensureDefaultAuthUsersForOutletTransactional(
+            connection = connection,
+            outletId = scopedOutletId,
+            nowIso = nowIso,
+        )
+    }
+
+    private fun hydrateOutletsFromExistingDataTransactional(connection: Connection) {
+        val discovered = linkedSetOf(DEFAULT_OUTLET_ID)
+        connection.prepareStatement(
+            """
+            SELECT outlet_id FROM menu_item WHERE outlet_id IS NOT NULL AND trim(outlet_id) <> ''
+            UNION
+            SELECT outlet_id FROM order_header WHERE outlet_id IS NOT NULL AND trim(outlet_id) <> ''
+            UNION
+            SELECT outlet_id FROM transaksi_header WHERE outlet_id IS NOT NULL AND trim(outlet_id) <> ''
+            UNION
+            SELECT outlet_id FROM cafe_reservation WHERE outlet_id IS NOT NULL AND trim(outlet_id) <> ''
+            UNION
+            SELECT outlet_id FROM api_auth_session WHERE outlet_id IS NOT NULL AND trim(outlet_id) <> ''
+            """.trimIndent()
+        ).use { statement ->
+            statement.executeQuery().use { rs ->
+                while (rs.next()) {
+                    val outletId = normalizeOutletId(rs.getString("outlet_id"))
+                    if (outletId.isNotBlank()) {
+                        discovered += outletId
+                    }
+                }
+            }
+        }
+        val nowIso = Instant.now().toString()
+        discovered.forEach { outletId ->
+            val defaultName = if (outletId == DEFAULT_OUTLET_ID) "Default Outlet" else "Outlet $outletId"
+            ensureOutletTransactional(
+                connection = connection,
+                outletId = outletId,
+                name = defaultName,
+                active = true,
+                nowIso = nowIso,
+            )
+        }
+    }
+
     private fun normalizeOutletId(outletId: String?): String {
-        return outletId?.trim().takeUnless { it.isNullOrBlank() } ?: DEFAULT_OUTLET_ID
+        return outletId.orEmpty()
+            .trim()
+            .replace(Regex("\\s+"), "-")
+            .ifBlank { DEFAULT_OUTLET_ID }
+            .take(64)
+    }
+
+    private fun resolveReservationTimestampInput(request: CreateReservationRequest): ReservationTimestamp? {
+        val reservationAt = request.resolvedReservationAt()
+            ?.trim()
+            .orEmpty()
+            .ifBlank { null }
+        if (reservationAt != null) {
+            return parseReservationTimestamp(reservationAt)
+        }
+
+        val date = request.resolvedReservationDate()
+            ?.trim()
+            .orEmpty()
+            .ifBlank { null }
+            ?: return null
+        val time = request.resolvedReservationTime()
+            ?.trim()
+            .orEmpty()
+            .ifBlank { null }
+            ?: return null
+
+        val parsedDate = runCatching { LocalDate.parse(date) }.getOrNull() ?: return null
+        val parsedTime = runCatching { LocalTime.parse(normalizeReservationTimeInput(time)) }.getOrNull() ?: return null
+        val normalized = LocalDateTime.of(parsedDate, parsedTime.withSecond(0).withNano(0))
+        return ReservationTimestamp(
+            iso = normalized.format(RESERVATION_ISO_FORMATTER),
+            date = normalized.toLocalDate().format(DateTimeFormatter.ISO_LOCAL_DATE),
+            time = normalized.toLocalTime().format(RESERVATION_TIME_FORMATTER),
+        )
+    }
+
+    private fun parseReservationTimestamp(raw: String): ReservationTimestamp? {
+        val normalizedRaw = raw.trim()
+            .replace(' ', 'T')
+            .ifBlank { return null }
+        val parsed = runCatching {
+            LocalDateTime.parse(normalizedRaw)
+        }.recoverCatching {
+            LocalDateTime.parse(normalizedRaw.substringBefore('.'))
+        }.recoverCatching {
+            LocalDateTime.ofInstant(Instant.parse(normalizedRaw), ZoneOffset.UTC)
+        }.getOrNull() ?: return null
+        val normalized = parsed.withSecond(0).withNano(0)
+        return ReservationTimestamp(
+            iso = normalized.format(RESERVATION_ISO_FORMATTER),
+            date = normalized.toLocalDate().format(DateTimeFormatter.ISO_LOCAL_DATE),
+            time = normalized.toLocalTime().format(RESERVATION_TIME_FORMATTER),
+        )
+    }
+
+    private fun normalizeReservationTimeInput(raw: String): String {
+        val value = raw.trim()
+        if (value.isBlank()) return value
+        return when (value.count { it == ':' }) {
+            0 -> "$value:00"
+            1 -> value
+            else -> value.substringBeforeLast(':')
+        }
     }
 
     private fun normalizeTransactionSyncEvents(request: TransactionBatchRequest): List<TransactionSyncEventDto> {
@@ -2708,7 +4685,7 @@ object ServerDatabase {
     }
 
     private fun hasAnyBusinessData(connection: Connection): Boolean {
-        val tableChecks = listOf("menu_item", "order_header", "transaksi_header", "customer")
+        val tableChecks = listOf("menu_item", "order_header", "transaksi_header", "customer", "cafe_reservation")
         return tableChecks.any { table ->
             connection.prepareStatement("SELECT 1 FROM \"$table\" LIMIT 1").use { statement ->
                 statement.executeQuery().use { rs -> rs.next() }

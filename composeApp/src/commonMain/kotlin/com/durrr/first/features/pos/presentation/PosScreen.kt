@@ -52,6 +52,14 @@ private data class CartItem(
     val qty: Long,
 )
 
+private enum class PosPaymentMethod(
+    val paymentTypeId: String,
+    val label: String,
+) {
+    TUNAI(paymentTypeId = "CASH", label = "Tunai"),
+    QRIS(paymentTypeId = "QRIS", label = "QRIS"),
+}
+
 @Composable
 fun PosScreen(
     menuRepository: MenuRepository,
@@ -72,6 +80,7 @@ fun PosScreen(
     var serviceCharge by remember { mutableStateOf("0") }
     var rounding by remember { mutableStateOf("0") }
     var paid by remember { mutableStateOf("0") }
+    var paymentMethod by remember { mutableStateOf(PosPaymentMethod.TUNAI) }
     var syncMessage by remember { mutableStateOf<String?>(null) }
     var isSyncing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -79,9 +88,7 @@ fun PosScreen(
     val totalsCalculator = remember { TotalsCalculator() }
 
     fun currentOutletId(): String {
-        return settingsRepository
-            .getValue(SettingsRepository.KEY_OUTLET_ID)
-            .ifBlank { SettingsRepository.DEFAULT_OUTLET_ID }
+        return settingsRepository.resolveOutletId()
     }
 
     fun refreshMenu() {
@@ -93,23 +100,40 @@ fun PosScreen(
     fun currentCashierName(): String = settingsRepository.resolveCurrentCashierName()
 
     LaunchedEffect(Unit) { refreshMenu() }
-    LaunchedEffect(scannedToken) {
-        if (!scannedToken.isNullOrBlank()) {
-            tableToken = scannedToken
-            onScannedTokenConsumed()
-        }
-    }
+    // LaunchedEffect(scannedToken) {
+    //     if (!scannedToken.isNullOrBlank()) {
+    //         tableToken = scannedToken
+    //         onScannedTokenConsumed()
+    //     }
+    // }
 
     fun serverBaseUrl(): String? = settingsRepository.getOptionalServerBaseUrl()
 
-    val totals = totalsCalculator.calculate(
+    val manualPaid = paid.toLongOrNull()?.coerceAtLeast(0L) ?: 0L
+    val baseTotals = totalsCalculator.calculate(
         lines = cartItems.map { TotalsCalculator.Line(it.qty, it.item.price, 0) },
-        discountPlus = discountPlus.toLongOrNull() ?: 0L,
-        tax = tax.toLongOrNull() ?: 0L,
-        serviceCharge = serviceCharge.toLongOrNull() ?: 0L,
-        rounding = rounding.toLongOrNull() ?: 0L,
-        paid = paid.toLongOrNull() ?: 0L,
+        discountPlus = discountPlus.toLongOrNull()?.coerceAtLeast(0L) ?: 0L,
+        tax = tax.toLongOrNull()?.coerceAtLeast(0L) ?: 0L,
+        serviceCharge = serviceCharge.toLongOrNull()?.coerceAtLeast(0L) ?: 0L,
+        rounding = rounding.toLongOrNull()?.coerceAtLeast(0L) ?: 0L,
+        paid = manualPaid,
     )
+    val effectivePaid = when (paymentMethod) {
+        PosPaymentMethod.TUNAI -> manualPaid
+        PosPaymentMethod.QRIS -> baseTotals.grandTotal
+    }
+    val totals = if (effectivePaid == manualPaid) {
+        baseTotals
+    } else {
+        totalsCalculator.calculate(
+            lines = cartItems.map { TotalsCalculator.Line(it.qty, it.item.price, 0) },
+            discountPlus = discountPlus.toLongOrNull()?.coerceAtLeast(0L) ?: 0L,
+            tax = tax.toLongOrNull()?.coerceAtLeast(0L) ?: 0L,
+            serviceCharge = serviceCharge.toLongOrNull()?.coerceAtLeast(0L) ?: 0L,
+            rounding = rounding.toLongOrNull()?.coerceAtLeast(0L) ?: 0L,
+            paid = effectivePaid,
+        )
+    }
 
     LazyColumn(
         modifier = Modifier.padding(Dimens.md),
@@ -118,21 +142,21 @@ fun PosScreen(
         item {
             AppSectionHeader("POS", "Create transaction, preview receipt, checkout cash")
         }
-        item {
-            AppCard {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column {
-                        Text("Table", style = MaterialTheme.typography.titleMedium)
-                        Text(if (tableToken.isBlank()) "No table selected" else tableToken)
-                    }
-                    Button(onClick = { launchScanner() }) { Text("Scan QR") }
-                }
-            }
-        }
+        // item {
+        //     AppCard {
+        //         Row(
+        //             modifier = Modifier.fillMaxWidth(),
+        //             horizontalArrangement = Arrangement.SpaceBetween,
+        //             verticalAlignment = Alignment.CenterVertically,
+        //         ) {
+        //             Column {
+        //                 Text("Table", style = MaterialTheme.typography.titleMedium)
+        //                 Text(if (tableToken.isBlank()) "No table selected" else tableToken)
+        //             }
+        //             // Button(onClick = { launchScanner() }) { Text("Scan QR") }
+        //         }
+        //     }
+        // }
         item {
             AppCard {
                 AppSectionHeader("Menu")
@@ -222,12 +246,30 @@ fun PosScreen(
                             modifier = Modifier.weight(1f),
                         )
                     }
-                    AmountField(
-                        label = "Cash Paid",
-                        value = paid,
-                        onValueChange = { paid = it },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(Dimens.xs)) {
+                        FilledTonalButton(
+                            onClick = { paymentMethod = PosPaymentMethod.TUNAI },
+                            modifier = Modifier.weight(1f),
+                        ) { Text("Tunai") }
+                        FilledTonalButton(
+                            onClick = { paymentMethod = PosPaymentMethod.QRIS },
+                            modifier = Modifier.weight(1f),
+                        ) { Text("QRIS") }
+                    }
+                    if (paymentMethod == PosPaymentMethod.TUNAI) {
+                        AmountField(
+                            label = "Tunai Dibayar",
+                            value = paid,
+                            onValueChange = { paid = it },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    } else {
+                        Text(
+                            "Pembayaran QRIS: ${formatRupiah(effectivePaid)}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                     HorizontalDivider()
                     SummaryLine(label = "Subtotal", amount = totals.subtotal)
                     SummaryLine(label = "Grand Total", amount = totals.grandTotal, emphasized = true)
@@ -245,10 +287,10 @@ fun PosScreen(
                                     meja = tableToken.ifBlank { null },
                                     cashierId = currentCashierId(),
                                     cashierName = currentCashierName(),
-                                    discountPlus = discountPlus.toLongOrNull() ?: 0L,
-                                    tax = tax.toLongOrNull() ?: 0L,
-                                    serviceCharge = serviceCharge.toLongOrNull() ?: 0L,
-                                    rounding = rounding.toLongOrNull() ?: 0L,
+                                    discountPlus = discountPlus.toLongOrNull()?.coerceAtLeast(0L) ?: 0L,
+                                    tax = tax.toLongOrNull()?.coerceAtLeast(0L) ?: 0L,
+                                    serviceCharge = serviceCharge.toLongOrNull()?.coerceAtLeast(0L) ?: 0L,
+                                    rounding = rounding.toLongOrNull()?.coerceAtLeast(0L) ?: 0L,
                                     total = totals.grandTotal,
                                     outletId = currentOutletId(),
                                 )
@@ -268,9 +310,9 @@ fun PosScreen(
                                     id = IdGenerator.newId("pay_preview_"),
                                     transaksiId = previewId,
                                     paidAt = createdAt,
-                                    amountPaid = paid.toLongOrNull() ?: 0L,
+                                    amountPaid = effectivePaid,
                                     change = totals.change,
-                                    paymentTypeId = "CASH",
+                                    paymentTypeId = paymentMethod.paymentTypeId,
                                     outletId = currentOutletId(),
                                 )
                                 ReceiptDraftStore.putDraft(
@@ -294,10 +336,10 @@ fun PosScreen(
                                     meja = tableToken.ifBlank { null },
                                     cashierId = currentCashierId(),
                                     cashierName = currentCashierName(),
-                                    discountPlus = discountPlus.toLongOrNull() ?: 0L,
-                                    tax = tax.toLongOrNull() ?: 0L,
-                                    serviceCharge = serviceCharge.toLongOrNull() ?: 0L,
-                                    rounding = rounding.toLongOrNull() ?: 0L,
+                                    discountPlus = discountPlus.toLongOrNull()?.coerceAtLeast(0L) ?: 0L,
+                                    tax = tax.toLongOrNull()?.coerceAtLeast(0L) ?: 0L,
+                                    serviceCharge = serviceCharge.toLongOrNull()?.coerceAtLeast(0L) ?: 0L,
+                                    rounding = rounding.toLongOrNull()?.coerceAtLeast(0L) ?: 0L,
                                     total = 0L,
                                     outletId = currentOutletId(),
                                 )
@@ -323,9 +365,9 @@ fun PosScreen(
                                     id = IdGenerator.newId("pay_"),
                                     transaksiId = transaksiId,
                                     paidAt = createdAt,
-                                    amountPaid = paid.toLongOrNull() ?: 0L,
+                                    amountPaid = effectivePaid,
                                     change = 0L,
-                                    paymentTypeId = "CASH",
+                                    paymentTypeId = paymentMethod.paymentTypeId,
                                     outletId = currentOutletId(),
                                 )
 
@@ -403,7 +445,7 @@ fun PosScreen(
                                 rounding = "0"
                                 paid = "0"
                             },
-                        ) { Text("Checkout Cash") }
+                        ) { Text("Checkout ${paymentMethod.label}") }
                     }
                     if (!syncMessage.isNullOrBlank()) {
                         Text(
@@ -434,7 +476,9 @@ private fun AmountField(
 ) {
     OutlinedTextField(
         value = value,
-        onValueChange = onValueChange,
+        onValueChange = { raw ->
+            onValueChange(raw.filter(Char::isDigit).take(12))
+        },
         label = { Text(label) },
         prefix = { Text("Rp") },
         singleLine = true,

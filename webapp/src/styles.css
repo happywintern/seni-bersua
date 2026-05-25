@@ -348,6 +348,7 @@ main {
 
 .menu-card-img {
   height: 160px;
+  overflow: hidden;
 }
 
 .coffee-placeholder,
@@ -493,6 +494,109 @@ main {
 
 .menu-page-card-img {
   height: 170px;
+  overflow: hidden;
+}
+
+.menu-page-card-photo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.menu-server-note {
+  width: min(1120px, 100%);
+  margin: 0 auto 18px;
+  color: #35506f;
+  font-weight: 600;
+}
+
+.menu-server-note-error {
+  color: #a44a3f;
+}
+
+.web-admin-page {
+  min-height: calc(100vh - 76px);
+  padding: 88px 24px 42px;
+  background: var(--page-bg);
+}
+
+.web-admin-card {
+  width: min(980px, 100%);
+  margin: 0 auto;
+  border-radius: 18px;
+  padding: 24px;
+  background: #fff;
+  box-shadow: 0 20px 50px rgba(13, 26, 46, 0.16);
+}
+
+.web-admin-card h2 {
+  margin: 0 0 6px;
+}
+
+.web-admin-subtitle {
+  margin: 0 0 18px;
+  color: #5f6b7a;
+}
+
+.web-admin-form {
+  display: grid;
+  gap: 14px;
+}
+
+.web-admin-form label {
+  display: grid;
+  gap: 8px;
+  font-weight: 600;
+  color: #1f2a37;
+}
+
+.web-admin-form input {
+  height: 44px;
+  border-radius: 10px;
+  border: 1px solid rgba(19, 46, 183, 0.2);
+  padding: 0 12px;
+  font-size: 0.95rem;
+}
+
+.web-admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.btn-secondary {
+  background: #fff;
+  color: var(--blue-800);
+  border: 1px solid rgba(19, 46, 183, 0.28);
+}
+
+.web-admin-message {
+  margin: 14px 0 0;
+  color: #224260;
+  font-weight: 600;
+}
+
+.web-admin-preview {
+  margin-top: 16px;
+  border-top: 1px solid rgba(13, 26, 46, 0.12);
+  padding-top: 12px;
+}
+
+.web-admin-preview ul {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.web-admin-preview li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #f7f9fc;
 }
 
 .menu-page-card-body {
@@ -855,6 +959,21 @@ main {
   }
   .btn-kirim:hover { background: #0b8fc4; }
   .btn-kirim:active { transform: scale(0.98); }
+  .btn-kirim:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  .reservation-error {
+    margin: 2px 0 8px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: #fff1f1;
+    border: 1px solid #f0b8b8;
+    color: #b32525;
+    font-size: 12px;
+  }
 
   /* POPUP */
   .popup-overlay {

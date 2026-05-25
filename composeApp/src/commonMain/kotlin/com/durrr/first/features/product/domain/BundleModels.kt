@@ -13,4 +13,5 @@ data class BundleDraft(
     val endDate: String,
     val price: Long,
     val items: List<BundleItemInput>,
+    val imageUrl: String? = null,
 )

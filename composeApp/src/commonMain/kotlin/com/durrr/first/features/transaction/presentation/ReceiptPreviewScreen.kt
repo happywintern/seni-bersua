@@ -30,6 +30,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.durrr.first.core.utils.formatReadableDateTime
 import com.durrr.first.core.utils.formatRupiah
 import com.durrr.first.data.repo.ReceiptRepository
 import com.durrr.first.data.repo.SettingsRepository
@@ -51,6 +52,8 @@ fun ReceiptPreviewScreen(
     receiptRepository: ReceiptRepository,
     settingsRepository: SettingsRepository,
     onBack: () -> Unit = {},
+    onShareReceipt: (subject: String, textPayload: String) -> Unit = { _, _ -> },
+    onPrintReceipt: (jobName: String, htmlPayload: String) -> Unit = { _, _ -> },
 ) {
     var loading by remember { mutableStateOf(false) }
     var data by remember { mutableStateOf<ReceiptData?>(null) }
@@ -60,9 +63,7 @@ fun ReceiptPreviewScreen(
     var watermarkLogoPath by remember { mutableStateOf("") }
     var footerText by remember { mutableStateOf("Thank you") }
     fun currentOutletId(): String {
-        return settingsRepository
-            .getValue(SettingsRepository.KEY_OUTLET_ID)
-            .ifBlank { SettingsRepository.DEFAULT_OUTLET_ID }
+        return settingsRepository.resolveOutletId()
     }
 
     LaunchedEffect(transaksiId) {
@@ -90,6 +91,23 @@ fun ReceiptPreviewScreen(
             message = "No receipt data for $transaksiId",
         )
         return
+    }
+    val receiptTitle = "Receipt ${receipt.transaksi.id.ifBlank { "Unknown" }}"
+    val receiptShareText = remember(receipt, storeName, storeAddress, footerText) {
+        buildReceiptShareText(
+            receipt = receipt,
+            storeName = storeName,
+            storeAddress = storeAddress,
+            footerText = footerText,
+        )
+    }
+    val receiptPrintHtml = remember(receipt, storeName, storeAddress, footerText) {
+        buildReceiptPrintHtml(
+            receipt = receipt,
+            storeName = storeName,
+            storeAddress = storeAddress,
+            footerText = footerText,
+        )
     }
 
     LazyColumn(
@@ -129,24 +147,17 @@ fun ReceiptPreviewScreen(
             ) {
                 Button(
                     modifier = Modifier.weight(1f),
-                    onClick = { /* TODO: print via Android print/printer SDK */ },
+                    onClick = { onPrintReceipt(receiptTitle, receiptPrintHtml) },
                 ) {
-                    Text("Print (TODO)")
+                    Text("Print")
                 }
                 FilledTonalButton(
                     modifier = Modifier.weight(1f),
-                    onClick = { /* TODO: export/share PNG */ },
+                    onClick = { onShareReceipt(receiptTitle, receiptShareText) },
                 ) {
                     Text("Share / Save")
                 }
             }
-        }
-        item {
-            Text(
-                text = "Next step: connect this layout to printer output.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodySmall,
-            )
         }
     }
 }
@@ -219,7 +230,7 @@ private fun ReceiptPaper(
                 }
                 ReceiptDivider()
                 ReceiptValueRow("Transaction", receipt.transaksi.id)
-                ReceiptValueRow("Date", receipt.transaksi.createdAt)
+                ReceiptValueRow("Date", formatReadableDateTime(receipt.transaksi.createdAt))
                 ReceiptValueRow("Table", receipt.transaksi.meja ?: "-")
                 ReceiptDivider()
 
@@ -307,6 +318,101 @@ private fun ReceiptDivider() {
         modifier = Modifier.padding(vertical = Dimens.xxs),
         color = Color.Black.copy(alpha = 0.3f),
     )
+}
+
+private fun buildReceiptShareText(
+    receipt: ReceiptData,
+    storeName: String,
+    storeAddress: String,
+    footerText: String,
+): String {
+    val subtotal = receipt.details.sumOf { it.total }
+    val payment = receipt.pembayaran
+    return buildString {
+        appendLine(storeName.ifBlank { "SuCash" })
+        if (storeAddress.isNotBlank()) appendLine(storeAddress)
+        appendLine("--------------------------------------------------")
+        appendLine("Transaction: ${receipt.transaksi.id}")
+        appendLine("Date: ${formatReadableDateTime(receipt.transaksi.createdAt)}")
+        appendLine("Table: ${receipt.transaksi.meja ?: "-"}")
+        appendLine("--------------------------------------------------")
+        if (receipt.details.isEmpty()) {
+            appendLine("(No items)")
+        } else {
+            receipt.details.forEach { detail ->
+                appendLine(detail.itemName)
+                appendLine("${detail.qty} x ${formatRupiah(detail.price)} = ${formatRupiah(detail.total)}")
+            }
+        }
+        appendLine("--------------------------------------------------")
+        appendLine("Subtotal: ${formatRupiah(subtotal)}")
+        appendLine("Discount: ${formatRupiah(receipt.transaksi.discountPlus)}")
+        appendLine("Tax: ${formatRupiah(receipt.transaksi.tax)}")
+        appendLine("Service: ${formatRupiah(receipt.transaksi.serviceCharge)}")
+        appendLine("Rounding: ${formatRupiah(receipt.transaksi.rounding)}")
+        appendLine("TOTAL: ${formatRupiah(receipt.transaksi.total)}")
+        appendLine("Paid: ${formatRupiah(payment?.amountPaid ?: 0L)}")
+        appendLine("Change: ${formatRupiah(payment?.change ?: 0L)}")
+        appendLine("Payment: ${payment?.paymentTypeId ?: "-"}")
+        appendLine("--------------------------------------------------")
+        appendLine(footerText.ifBlank { "Thank you" })
+    }
+}
+
+private fun buildReceiptPrintHtml(
+    receipt: ReceiptData,
+    storeName: String,
+    storeAddress: String,
+    footerText: String,
+): String {
+    val subtotal = receipt.details.sumOf { it.total }
+    val payment = receipt.pembayaran
+    val itemsHtml = if (receipt.details.isEmpty()) {
+        "<tr><td colspan=\"2\">(No items)</td></tr>"
+    } else {
+        receipt.details.joinToString("") { detail ->
+            "<tr><td><b>${escapeHtml(detail.itemName)}</b><br/>${detail.qty} x ${formatRupiah(detail.price)}</td><td style=\"text-align:right;\">${formatRupiah(detail.total)}</td></tr>"
+        }
+    }
+    return """
+        <html>
+        <body style="font-family: monospace; padding: 12px;">
+          <h2 style="text-align:center; margin:0;">${escapeHtml(storeName.ifBlank { "SuCash" })}</h2>
+          ${if (storeAddress.isNotBlank()) "<div style=\"text-align:center; margin-bottom:8px;\">${escapeHtml(storeAddress)}</div>" else ""}
+          <hr/>
+          <div>Transaction: ${escapeHtml(receipt.transaksi.id)}</div>
+          <div>Date: ${escapeHtml(formatReadableDateTime(receipt.transaksi.createdAt))}</div>
+          <div>Table: ${escapeHtml(receipt.transaksi.meja ?: "-")}</div>
+          <hr/>
+          <table style="width:100%; border-collapse:collapse;">
+            $itemsHtml
+          </table>
+          <hr/>
+          <table style="width:100%;">
+            <tr><td>Subtotal</td><td style="text-align:right;">${formatRupiah(subtotal)}</td></tr>
+            <tr><td>Discount</td><td style="text-align:right;">${formatRupiah(receipt.transaksi.discountPlus)}</td></tr>
+            <tr><td>Tax</td><td style="text-align:right;">${formatRupiah(receipt.transaksi.tax)}</td></tr>
+            <tr><td>Service</td><td style="text-align:right;">${formatRupiah(receipt.transaksi.serviceCharge)}</td></tr>
+            <tr><td>Rounding</td><td style="text-align:right;">${formatRupiah(receipt.transaksi.rounding)}</td></tr>
+            <tr><td><b>TOTAL</b></td><td style="text-align:right;"><b>${formatRupiah(receipt.transaksi.total)}</b></td></tr>
+            <tr><td>Paid</td><td style="text-align:right;">${formatRupiah(payment?.amountPaid ?: 0L)}</td></tr>
+            <tr><td>Change</td><td style="text-align:right;">${formatRupiah(payment?.change ?: 0L)}</td></tr>
+            <tr><td>Payment</td><td style="text-align:right;">${escapeHtml(payment?.paymentTypeId ?: "-")}</td></tr>
+          </table>
+          <hr/>
+          <div style="text-align:center;">${escapeHtml(footerText.ifBlank { "Thank you" })}</div>
+        </body>
+        </html>
+    """.trimIndent()
+}
+
+private fun escapeHtml(value: String): String {
+    return value
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\"", "&quot;")
+        .replace("'", "&#39;")
 }
 
 @Preview

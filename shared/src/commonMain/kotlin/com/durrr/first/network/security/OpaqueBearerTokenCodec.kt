@@ -1,30 +1,40 @@
 package com.durrr.first.network.security
 
 object OpaqueBearerTokenCodec {
-    private const val VERSION = "v1"
+    private const val VERSION = "v2"
+    private const val LEGACY_VERSION = "v1"
     private const val PAYLOAD_SEPARATOR = "|"
 
     data class Claims(
         val role: String,
         val pin: String,
+        val outletId: String?,
+        val version: String,
     )
 
     fun issue(
         secret: String,
         role: String,
         pin: String,
+        outletId: String = "default",
     ): String? {
         val normalizedSecret = secret.trim()
         val normalizedRole = role.trim().uppercase()
         val normalizedPin = pin.trim()
+        val normalizedOutletId = normalizeOutletId(outletId)
         if (normalizedSecret.isBlank()) return null
         if (normalizedRole !in setOf("OWNER", "CASHIER")) return null
         if (!isValidPin(normalizedPin)) return null
+        if (normalizedOutletId.isBlank()) return null
 
-        val payload = "$normalizedRole$PAYLOAD_SEPARATOR$normalizedPin"
+        val payload = listOf(
+            normalizedRole,
+            normalizedPin,
+            normalizedOutletId,
+        ).joinToString(PAYLOAD_SEPARATOR)
         val encryptedPayload = xorWithSecret(payload.encodeToByteArray(), normalizedSecret.encodeToByteArray())
         val payloadHex = encryptedPayload.toHexString()
-        val signature = computeSignatureHex(payloadHex, normalizedSecret)
+        val signature = computeSignatureHex(VERSION, payloadHex, normalizedSecret)
         return "$VERSION.$payloadHex.$signature"
     }
 
@@ -39,24 +49,33 @@ object OpaqueBearerTokenCodec {
         val version = parts[0]
         val payloadHex = parts[1]
         val signature = parts[2]
-        if (version != VERSION) return null
+        if (version != VERSION && version != LEGACY_VERSION) return null
         if (payloadHex.isBlank() || signature.isBlank()) return null
 
-        val expectedSignature = computeSignatureHex(payloadHex, normalizedSecret)
+        val expectedSignature = computeSignatureHex(version, payloadHex, normalizedSecret)
         if (!expectedSignature.equals(signature, ignoreCase = true)) return null
 
         val encryptedPayload = payloadHex.hexToByteArray() ?: return null
         val payloadBytes = xorWithSecret(encryptedPayload, normalizedSecret.encodeToByteArray())
         val payload = payloadBytes.decodeToString()
         val payloadParts = payload.split(PAYLOAD_SEPARATOR)
-        if (payloadParts.size != 2) return null
+        if (version == VERSION && payloadParts.size != 3) return null
+        if (version == LEGACY_VERSION && payloadParts.size != 2) return null
         val role = payloadParts[0].trim().uppercase()
         val pin = payloadParts[1].trim()
         if (role !in setOf("OWNER", "CASHIER")) return null
         if (!isValidPin(pin)) return null
+        val outletId = if (version == VERSION) {
+            normalizeOutletId(payloadParts[2])
+        } else {
+            null
+        }
+        if (version == VERSION && outletId.isNullOrBlank()) return null
         return Claims(
             role = role,
             pin = pin,
+            outletId = outletId,
+            version = version,
         )
     }
 
@@ -75,8 +94,8 @@ object OpaqueBearerTokenCodec {
         return output
     }
 
-    private fun computeSignatureHex(payloadHex: String, secret: String): String {
-        val source = "$VERSION.$payloadHex.$secret".encodeToByteArray()
+    private fun computeSignatureHex(version: String, payloadHex: String, secret: String): String {
+        val source = "$version.$payloadHex.$secret".encodeToByteArray()
         var hash = 0xCBF29CE484222325uL
         source.forEach { byte ->
             hash = hash xor (byte.toInt() and 0xFF).toULong()
@@ -87,6 +106,14 @@ object OpaqueBearerTokenCodec {
 
     private fun isValidPin(pin: String): Boolean {
         return pin.length in 4..6 && pin.all(Char::isDigit)
+    }
+
+    private fun normalizeOutletId(value: String?): String {
+        return value.orEmpty()
+            .trim()
+            .replace(Regex("\\s+"), "-")
+            .ifBlank { "default" }
+            .take(64)
     }
 
     private fun ByteArray.toHexString(): String {

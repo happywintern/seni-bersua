@@ -156,6 +156,12 @@ body {
   background: #edf2ff;
 }
 
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 .btn-primary {
   background: var(--primary);
   color: white;
@@ -259,6 +265,31 @@ body {
   font: inherit;
 }
 
+.toggle-row {
+  margin-top: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+}
+
+.pairing-box {
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f9fbff;
+  padding: 12px;
+}
+
+.pairing-code {
+  margin: 6px 0;
+  font-size: 1.35rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--primary);
+  font-variant-numeric: tabular-nums;
+}
+
 .checkout-row {
   margin: 12px 0;
   display: flex;
@@ -323,7 +354,7 @@ body {
 
 .table-header {
   display: grid;
-  grid-template-columns: 36px 1fr auto auto auto;
+  grid-template-columns: 1fr auto auto;
   gap: 8px;
   align-items: center;
 }
@@ -616,10 +647,12 @@ body {
   text-align: center;
 }
 
-.confirm-close {
-  position: absolute;
-  right: 10px;
-  top: 10px;
+.confirm-description {
+  margin: 4px 0 0;
+  text-align: center;
+  color: var(--muted);
+  line-height: 1.45;
+  font-size: 0.92rem;
 }
 
 .confirm-actions {

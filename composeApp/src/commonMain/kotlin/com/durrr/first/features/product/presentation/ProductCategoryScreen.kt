@@ -30,6 +30,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.durrr.first.data.repo.MenuRepository
 import com.durrr.first.data.repo.SettingsRepository
+import com.durrr.first.data.repo.CatalogNameRules
 import com.durrr.first.domain.model.GroupItem
 import com.durrr.first.domain.service.IdGenerator
 import com.durrr.first.ui.design.AppTheme
@@ -48,8 +49,7 @@ fun ProductCategoryScreen(
     var statusMessage by remember { mutableStateOf<String?>(null) }
 
     fun currentOutletId(): String {
-        return settingsRepository.getValue(SettingsRepository.KEY_OUTLET_ID)
-            .ifBlank { SettingsRepository.DEFAULT_OUTLET_ID }
+        return settingsRepository.resolveOutletId()
     }
 
     fun refresh() {
@@ -78,9 +78,9 @@ fun ProductCategoryScreen(
     }
 
     fun save() {
-        val name = categoryName.trim()
+        val name = CatalogNameRules.normalize(categoryName)
         if (name.isBlank()) {
-            statusMessage = "Nama kategori wajib diisi."
+            statusMessage = "Nama kategori wajib ASCII terbaca (maks ${CatalogNameRules.MAX_LENGTH} karakter)."
             return
         }
         val normalizedName = normalizeCategoryNameKey(name)
@@ -145,7 +145,7 @@ fun ProductCategoryScreen(
 }
 
 private fun normalizeCategoryNameKey(name: String): String {
-    return name.trim()
+    return CatalogNameRules.normalize(name)
         .lowercase()
         .replace(Regex("[^a-z0-9]+"), " ")
         .replace(Regex("\\s+"), " ")

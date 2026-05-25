@@ -1,0 +1,65 @@
+import { buildApiUrl, getOutletId } from "./serverConfig";
+
+const CARD_ACCENTS = [
+  "#f0e6d3",
+  "#e8d5c4",
+  "#d4e8f0",
+  "#f5e6d0",
+  "#e8f0e4",
+  "#f0d5e8",
+  "#f5ecd4",
+  "#dce8f5",
+];
+
+const CARD_EMOJIS = ["☕", "🥛", "🧊", "🍵", "🍫", "🥤", "🫧", "💙"];
+
+function formatNumberId(value) {
+  return new Intl.NumberFormat("id-ID", {
+    maximumFractionDigits: 0,
+  }).format(Number.isFinite(value) ? Math.round(value) : 0);
+}
+
+function formatRupiah(value) {
+  return `Rp ${formatNumberId(value)}`;
+}
+
+function parseEnvelope(data) {
+  if (data && typeof data === "object" && ("data" in data || "error" in data)) {
+    if (data.error) {
+      throw new Error(data.error || "Server error");
+    }
+    return data.data;
+  }
+  return data;
+}
+
+export async function fetchMenuItemsFromServer(outletId = getOutletId()) {
+  const endpoint = `${buildApiUrl("/api/menu")}?outlet=${encodeURIComponent(outletId)}`;
+  const response = await fetch(endpoint);
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(body?.error || body?.message || `HTTP ${response.status}`);
+  }
+  const payload = parseEnvelope(body);
+  const items = Array.isArray(payload) ? payload : payload?.items;
+  if (!Array.isArray(items)) {
+    throw new Error("Invalid menu payload");
+  }
+  return items.map((item, index) => {
+    const category = (item.groupName || item.groupId || "Lainnya").trim() || "Lainnya";
+    const code = (item.code || item.id || "").trim();
+    const ingredients = code ? `Kode: ${code}` : "Racikan khas dari outlet.";
+    const priceNumber = Number(item.price || 0);
+    return {
+      id: item.id || `menu_${index}`,
+      name: (item.name || "Tanpa Nama").trim(),
+      category,
+      ingredients,
+      priceNumber: Number.isFinite(priceNumber) ? priceNumber : 0,
+      priceLabel: formatRupiah(Number.isFinite(priceNumber) ? priceNumber : 0),
+      accent: CARD_ACCENTS[index % CARD_ACCENTS.length],
+      emoji: CARD_EMOJIS[index % CARD_EMOJIS.length],
+      imageUrl: item.imageUrl || item.image_url || null,
+    };
+  });
+}

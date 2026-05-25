@@ -11,6 +11,23 @@ import com.durrr.first.network.dto.UpsertModifierGroupRequest
 import com.durrr.first.network.dto.ServerOrderDto
 import com.durrr.first.network.dto.ServerOrderStatus
 import com.durrr.first.network.dto.ServerOrderStatusRequest
+import com.durrr.first.network.dto.ServerReservationDto
+import com.durrr.first.network.dto.ServerReservationStatus
+import com.durrr.first.network.dto.ServerReservationStatusRequest
+import com.durrr.first.network.dto.ServerAuthSessionDto
+import com.durrr.first.network.dto.ServerAuthSessionLoginRequest
+import com.durrr.first.network.dto.ServerAuthSessionRefreshRequest
+import com.durrr.first.network.dto.ServerAuthPairingCodeCreateRequest
+import com.durrr.first.network.dto.ServerAuthPairingCodeDto
+import com.durrr.first.network.dto.ServerAuthPairingCodeRedeemRequest
+import com.durrr.first.network.dto.ServerAuthAuditLogDto
+import com.durrr.first.network.dto.ServerOutletDto
+import com.durrr.first.network.dto.ServerOutletStatusRequest
+import com.durrr.first.network.dto.ServerOutletUpsertRequest
+import com.durrr.first.network.dto.ServerAuthSessionViewDto
+import com.durrr.first.network.dto.ServerAuthUserDto
+import com.durrr.first.network.dto.ServerAuthUserStatusRequest
+import com.durrr.first.network.dto.ServerAuthUserUpsertRequest
 import com.durrr.first.network.dto.TransactionBatchRequest
 import com.durrr.first.network.dto.TransactionBatchResponse
 import com.durrr.first.network.dto.UpsertMenuItemRequest
@@ -205,12 +222,14 @@ class ServerApiClient {
         baseUrl: String,
         statuses: List<ServerOrderStatus>,
         outletId: String? = null,
+        bearerToken: String? = null,
     ): List<ServerOrderDto> {
         val url = normalizeBaseUrl(baseUrl)
         val statusFilter = statuses.joinToString(",") { it.name }
         val endpoint = "$url/api/orders"
         return client.get("$url/api/orders") {
             header(HttpHeaders.Connection, "close")
+            attachBearerToken(bearerToken)
             parameter("status", statusFilter)
             if (!outletId.isNullOrBlank()) {
                 parameter("outlet", outletId)
@@ -240,6 +259,47 @@ class ServerApiClient {
         }.unwrapApiData(endpoint)
     }
 
+    suspend fun fetchReservations(
+        baseUrl: String,
+        statuses: List<ServerReservationStatus>,
+        outletId: String? = null,
+        bearerToken: String? = null,
+    ): List<ServerReservationDto> {
+        val url = normalizeBaseUrl(baseUrl)
+        val statusFilter = statuses.joinToString(",") { it.name }
+        val endpoint = "$url/api/reservations"
+        return client.get("$url/api/reservations") {
+            header(HttpHeaders.Connection, "close")
+            attachBearerToken(bearerToken)
+            parameter("status", statusFilter)
+            if (!outletId.isNullOrBlank()) {
+                parameter("outlet", outletId)
+            }
+        }.unwrapApiData(endpoint)
+    }
+
+    suspend fun updateReservationStatus(
+        baseUrl: String,
+        reservationId: String,
+        status: ServerReservationStatus,
+        outletId: String? = null,
+        bearerToken: String? = null,
+    ): ServerReservationDto {
+        val url = normalizeBaseUrl(baseUrl)
+        val endpoint = "$url/api/reservations/$reservationId/status"
+        return client.post("$url/api/reservations/$reservationId/status") {
+            header(HttpHeaders.Connection, "close")
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            attachBearerToken(bearerToken)
+            setBody(
+                ApiEnvelopeDto(
+                    data = ServerReservationStatusRequest(status = status.name, outletId = outletId),
+                    message = "Update reservation status request",
+                )
+            )
+        }.unwrapApiData(endpoint)
+    }
+
     suspend fun syncTransactions(
         baseUrl: String,
         request: TransactionBatchRequest,
@@ -260,16 +320,125 @@ class ServerApiClient {
         }.unwrapApiData(endpoint)
     }
 
-    suspend fun getDailyRecap(baseUrl: String, date: String, outletId: String? = null): DailyRecapResponse {
+    suspend fun loginServerSession(
+        baseUrl: String,
+        request: ServerAuthSessionLoginRequest,
+        bootstrapBearerToken: String? = null,
+    ): ServerAuthSessionDto {
         val url = normalizeBaseUrl(baseUrl)
-        val endpoint = "$url/api/recap/daily"
-        return client.get("$url/api/recap/daily") {
+        val endpoint = "$url/api/auth/session/login"
+        return client.post("$url/api/auth/session/login") {
             header(HttpHeaders.Connection, "close")
-            parameter("date", date)
-            if (!outletId.isNullOrBlank()) {
-                parameter("outlet", outletId)
-            }
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            attachBearerToken(bootstrapBearerToken)
+            setBody(
+                ApiEnvelopeDto(
+                    data = request,
+                    message = "Auth session login request",
+                )
+            )
         }.unwrapApiData(endpoint)
+    }
+
+    suspend fun createPairingCode(
+        baseUrl: String,
+        request: ServerAuthPairingCodeCreateRequest,
+        bearerToken: String? = null,
+    ): ServerAuthPairingCodeDto {
+        val url = normalizeBaseUrl(baseUrl)
+        val endpoint = "$url/api/auth/pairing/create"
+        val fallbackEndpoint = "$url/auth/pairing/create"
+        return try {
+            client.post("$url/api/auth/pairing/create") {
+                header(HttpHeaders.Connection, "close")
+                header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+                attachBearerToken(bearerToken)
+                setBody(
+                    ApiEnvelopeDto(
+                        data = request,
+                        message = "Auth pairing create request",
+                    )
+                )
+            }.unwrapApiData(endpoint)
+        } catch (error: ServerApiException) {
+            if (error.statusCode != 404) throw error
+            client.post("$url/auth/pairing/create") {
+                header(HttpHeaders.Connection, "close")
+                header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+                attachBearerToken(bearerToken)
+                setBody(
+                    ApiEnvelopeDto(
+                        data = request,
+                        message = "Auth pairing create request",
+                    )
+                )
+            }.unwrapApiData(fallbackEndpoint)
+        }
+    }
+
+    suspend fun redeemPairingCode(
+        baseUrl: String,
+        request: ServerAuthPairingCodeRedeemRequest,
+    ): ServerAuthSessionDto {
+        val url = normalizeBaseUrl(baseUrl)
+        val endpoint = "$url/api/auth/pairing/redeem"
+        val fallbackEndpoint = "$url/auth/pairing/redeem"
+        return try {
+            client.post("$url/api/auth/pairing/redeem") {
+                header(HttpHeaders.Connection, "close")
+                header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+                setBody(
+                    ApiEnvelopeDto(
+                        data = request,
+                        message = "Auth pairing redeem request",
+                    )
+                )
+            }.unwrapApiData(endpoint)
+        } catch (error: ServerApiException) {
+            if (error.statusCode != 404) throw error
+            client.post("$url/auth/pairing/redeem") {
+                header(HttpHeaders.Connection, "close")
+                header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+                setBody(
+                    ApiEnvelopeDto(
+                        data = request,
+                        message = "Auth pairing redeem request",
+                    )
+                )
+            }.unwrapApiData(fallbackEndpoint)
+        }
+    }
+
+    suspend fun refreshServerSession(
+        baseUrl: String,
+        request: ServerAuthSessionRefreshRequest,
+        bearerToken: String,
+    ): ServerAuthSessionDto {
+        val url = normalizeBaseUrl(baseUrl)
+        val endpoint = "$url/api/auth/session/refresh"
+        return client.post("$url/api/auth/session/refresh") {
+            header(HttpHeaders.Connection, "close")
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            attachBearerToken(bearerToken)
+            setBody(
+                ApiEnvelopeDto(
+                    data = request,
+                    message = "Auth session refresh request",
+                )
+            )
+        }.unwrapApiData(endpoint)
+    }
+
+    suspend fun logoutServerSession(
+        baseUrl: String,
+        bearerToken: String,
+    ) {
+        val url = normalizeBaseUrl(baseUrl)
+        val endpoint = "$url/api/auth/session/logout"
+        client.post("$url/api/auth/session/logout") {
+            header(HttpHeaders.Connection, "close")
+            attachBearerToken(bearerToken)
+        }.ensureApiSuccess(endpoint)
     }
 
     suspend fun getRecapSummary(
@@ -277,16 +446,193 @@ class ServerApiClient {
         range: RecapRange,
         date: String,
         outletId: String? = null,
+        bearerToken: String? = null,
     ): RecapSummaryResponse {
         val url = normalizeBaseUrl(baseUrl)
         val endpoint = "$url/api/recap/summary"
         return client.get("$url/api/recap/summary") {
             header(HttpHeaders.Connection, "close")
+            attachBearerToken(bearerToken)
             parameter("date", date)
             parameter("range", range.toDto().name)
             if (!outletId.isNullOrBlank()) {
                 parameter("outlet", outletId)
             }
+        }.unwrapApiData(endpoint)
+    }
+
+    suspend fun getDailyRecap(
+        baseUrl: String,
+        date: String,
+        outletId: String? = null,
+        bearerToken: String? = null,
+    ): DailyRecapResponse {
+        val url = normalizeBaseUrl(baseUrl)
+        val endpoint = "$url/api/recap/daily"
+        return client.get("$url/api/recap/daily") {
+            header(HttpHeaders.Connection, "close")
+            attachBearerToken(bearerToken)
+            parameter("date", date)
+            if (!outletId.isNullOrBlank()) {
+                parameter("outlet", outletId)
+            }
+        }.unwrapApiData(endpoint)
+    }
+
+    suspend fun listOutlets(
+        baseUrl: String,
+        bearerToken: String,
+    ): List<ServerOutletDto> {
+        val url = normalizeBaseUrl(baseUrl)
+        val endpoint = "$url/api/outlets"
+        return client.get("$url/api/outlets") {
+            header(HttpHeaders.Connection, "close")
+            attachBearerToken(bearerToken)
+        }.unwrapApiData(endpoint)
+    }
+
+    suspend fun upsertOutlet(
+        baseUrl: String,
+        request: ServerOutletUpsertRequest,
+        bearerToken: String,
+    ): ServerOutletDto {
+        val url = normalizeBaseUrl(baseUrl)
+        val endpoint = "$url/api/outlets/upsert"
+        return client.post("$url/api/outlets/upsert") {
+            header(HttpHeaders.Connection, "close")
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            attachBearerToken(bearerToken)
+            setBody(
+                ApiEnvelopeDto(
+                    data = request,
+                    message = "Outlet upsert request",
+                )
+            )
+        }.unwrapApiData(endpoint)
+    }
+
+    suspend fun updateOutletStatus(
+        baseUrl: String,
+        outletId: String,
+        active: Boolean,
+        bearerToken: String,
+    ): ServerOutletDto {
+        val url = normalizeBaseUrl(baseUrl)
+        val endpoint = "$url/api/outlets/$outletId/status"
+        return client.post("$url/api/outlets/$outletId/status") {
+            header(HttpHeaders.Connection, "close")
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            attachBearerToken(bearerToken)
+            setBody(
+                ApiEnvelopeDto(
+                    data = ServerOutletStatusRequest(active = active, outletId = outletId),
+                    message = "Outlet status update request",
+                )
+            )
+        }.unwrapApiData(endpoint)
+    }
+
+    suspend fun listAuthUsers(
+        baseUrl: String,
+        outletId: String,
+        bearerToken: String,
+    ): List<ServerAuthUserDto> {
+        val url = normalizeBaseUrl(baseUrl)
+        val endpoint = "$url/api/auth/users"
+        return client.get("$url/api/auth/users") {
+            header(HttpHeaders.Connection, "close")
+            attachBearerToken(bearerToken)
+            parameter("outlet", outletId)
+        }.unwrapApiData(endpoint)
+    }
+
+    suspend fun upsertAuthUser(
+        baseUrl: String,
+        request: ServerAuthUserUpsertRequest,
+        bearerToken: String,
+    ): ServerAuthUserDto {
+        val url = normalizeBaseUrl(baseUrl)
+        val endpoint = "$url/api/auth/users/upsert"
+        return client.post("$url/api/auth/users/upsert") {
+            header(HttpHeaders.Connection, "close")
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            attachBearerToken(bearerToken)
+            setBody(
+                ApiEnvelopeDto(
+                    data = request,
+                    message = "Auth user upsert request",
+                )
+            )
+        }.unwrapApiData(endpoint)
+    }
+
+    suspend fun updateAuthUserStatus(
+        baseUrl: String,
+        userId: String,
+        request: ServerAuthUserStatusRequest,
+        bearerToken: String,
+    ): ServerAuthUserDto {
+        val url = normalizeBaseUrl(baseUrl)
+        val endpoint = "$url/api/auth/users/$userId/status"
+        return client.post("$url/api/auth/users/$userId/status") {
+            header(HttpHeaders.Connection, "close")
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            attachBearerToken(bearerToken)
+            setBody(
+                ApiEnvelopeDto(
+                    data = request,
+                    message = "Auth user status update request",
+                )
+            )
+        }.unwrapApiData(endpoint)
+    }
+
+    suspend fun listAuthSessions(
+        baseUrl: String,
+        outletId: String,
+        bearerToken: String,
+        includeRevoked: Boolean = false,
+        limit: Int = 100,
+    ): List<ServerAuthSessionViewDto> {
+        val url = normalizeBaseUrl(baseUrl)
+        val endpoint = "$url/api/auth/sessions"
+        return client.get("$url/api/auth/sessions") {
+            header(HttpHeaders.Connection, "close")
+            attachBearerToken(bearerToken)
+            parameter("outlet", outletId)
+            parameter("include_revoked", includeRevoked)
+            parameter("limit", limit)
+        }.unwrapApiData(endpoint)
+    }
+
+    suspend fun revokeAuthSession(
+        baseUrl: String,
+        sessionId: String,
+        outletId: String,
+        bearerToken: String,
+    ) {
+        val url = normalizeBaseUrl(baseUrl)
+        val endpoint = "$url/api/auth/sessions/$sessionId/revoke"
+        client.post("$url/api/auth/sessions/$sessionId/revoke") {
+            header(HttpHeaders.Connection, "close")
+            attachBearerToken(bearerToken)
+            parameter("outlet", outletId)
+        }.ensureApiSuccess(endpoint)
+    }
+
+    suspend fun listAuthAuditLogs(
+        baseUrl: String,
+        outletId: String,
+        bearerToken: String,
+        limit: Int = 100,
+    ): List<ServerAuthAuditLogDto> {
+        val url = normalizeBaseUrl(baseUrl)
+        val endpoint = "$url/api/auth/audit"
+        return client.get("$url/api/auth/audit") {
+            header(HttpHeaders.Connection, "close")
+            attachBearerToken(bearerToken)
+            parameter("outlet", outletId)
+            parameter("limit", limit)
         }.unwrapApiData(endpoint)
     }
 

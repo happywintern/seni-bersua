@@ -39,6 +39,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.durrr.first.core.utils.formatReadableDateTime
 import com.durrr.first.core.utils.formatNumber
 import com.durrr.first.core.utils.formatRupiah
 import com.durrr.first.data.repo.OrderCacheRepository
@@ -83,7 +84,7 @@ fun OrdersScreen(
     fun serverBaseUrl(): String? = settingsRepository.getOptionalServerBaseUrl()
 
     fun currentOutletId(): String {
-        return settingsRepository.getValue(SettingsRepository.KEY_OUTLET_ID).ifBlank { SettingsRepository.DEFAULT_OUTLET_ID }
+        return settingsRepository.resolveOutletId()
     }
 
     fun reloadLocalOrders() {
@@ -106,8 +107,20 @@ fun OrdersScreen(
         isPullingOrders = true
         try {
             val pulled = orderSyncRepository.pullOrders(baseUrl, currentOutletId())
+            val reservationSummary = runCatching {
+                orderSyncRepository.fetchReservationSummary(baseUrl, currentOutletId())
+            }.getOrNull()
             reloadLocalOrders()
-            showNotification("Synced $pulled order(s)")
+            val message = buildString {
+                append("Synced $pulled order(s)")
+                reservationSummary?.let {
+                    append(" • Reservations: ${it.total}")
+                    if (it.pending > 0) {
+                        append(" (pending ${it.pending})")
+                    }
+                }
+            }
+            showNotification(message)
         } catch (t: Throwable) {
             showNotification(t.message ?: "Sync failed")
         } finally {
@@ -512,12 +525,7 @@ private fun friendlyTableLabel(order: OrderWithItems): String {
 }
 
 private fun friendlyCreatedAt(createdAt: String): String {
-    val date = createdAt.substringBefore('T')
-    val time = createdAt.substringAfter('T', "").take(5)
-    if (date.length == 10 && time.length == 5) {
-        return "$time • $date"
-    }
-    return createdAt.take(16)
+    return formatReadableDateTime(createdAt)
 }
 
 @Composable
