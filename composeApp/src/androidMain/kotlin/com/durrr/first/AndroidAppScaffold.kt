@@ -446,6 +446,7 @@ fun AndroidAppScaffold(
                                 menuSyncRepository = dependencies.menuSyncRepository,
                                 pickDate = dependencies.pickDate,
                                 pickImage = dependencies.pickImage,
+                                uploadMenuImage = dependencies.uploadMenuImage,
                             )
                         } else {
                             AccessDeniedScreen(

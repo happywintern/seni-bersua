@@ -10,4 +10,5 @@ data class PromoDraft(
     val promoPrice: Long,
     val startDate: String,
     val endDate: String,
+    val imageUrl: String? = null,
 )

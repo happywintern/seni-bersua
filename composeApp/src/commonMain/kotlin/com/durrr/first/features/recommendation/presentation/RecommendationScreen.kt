@@ -81,6 +81,7 @@ fun RecommendationScreen(
     menuSyncRepository: MenuSyncRepository,
     pickDate: (initialIso: String?, onPicked: (String) -> Unit) -> Unit = { _, _ -> },
     pickImage: ((String?) -> Unit) -> Unit = { onPicked -> onPicked(null) },
+    uploadMenuImage: suspend (baseUrl: String, localUri: String, outletId: String) -> String? = { _, _, _ -> null },
 ) {
     val bundles = BundleStore.bundles
     val promos = PromoStore.promos
@@ -105,8 +106,30 @@ fun RecommendationScreen(
     var promoDiscountPercent by remember { mutableStateOf("") }
     var promoStartDate by remember { mutableStateOf("") }
     var promoEndDate by remember { mutableStateOf("") }
+    var promoImageUrl by remember { mutableStateOf("") }
 
     fun currentOutletId(): String = settingsRepository.resolveOutletId()
+    fun serverBaseUrl(): String? = settingsRepository.getOptionalServerBaseUrl()
+
+    fun isLocalDeviceImageUri(value: String?): Boolean {
+        val normalized = value?.trim().orEmpty()
+        return normalized.startsWith("content://", ignoreCase = true) ||
+            normalized.startsWith("file://", ignoreCase = true)
+    }
+
+    suspend fun resolveServerImageUrlOrKeepLocal(imageUrl: String?, outletId: String): Pair<String?, String?> {
+        val trimmed = imageUrl?.trim().orEmpty()
+        if (trimmed.isBlank()) return null to null
+        if (!isLocalDeviceImageUri(trimmed)) return trimmed to null
+        val baseUrl = serverBaseUrl()
+        if (baseUrl.isNullOrBlank()) return trimmed to "Server base URL belum diisi."
+        val uploaded = runCatching { uploadMenuImage(baseUrl, trimmed, outletId) }
+            .getOrElse { error -> return trimmed to (error.message ?: "Upload foto gagal") }
+            ?.trim()
+            .orEmpty()
+        if (uploaded.isBlank()) return trimmed to "Upload foto gagal."
+        return uploaded to null
+    }
 
     fun persistRecommendationDrafts() {
         settingsRepository.upsert(KEY_RECOMMENDATION_BUNDLES, encodeBundles(bundles))
@@ -172,7 +195,12 @@ fun RecommendationScreen(
             val existing = existingPromoById[promoId]
                 ?: existingPromoByName[normalizeNameKey(item.name)]
             if (existing != null) {
-                existing.copy(name = item.name, promoPrice = item.price, qty = existing.qty.coerceAtLeast(1))
+                existing.copy(
+                    name = item.name,
+                    promoPrice = item.price,
+                    qty = existing.qty.coerceAtLeast(1),
+                    imageUrl = item.imageUrl ?: existing.imageUrl,
+                )
             } else {
                 PromoDraft(
                     id = promoId,
@@ -184,6 +212,7 @@ fun RecommendationScreen(
                     promoPrice = item.price,
                     startDate = existing?.startDate.orEmpty(),
                     endDate = existing?.endDate.orEmpty(),
+                    imageUrl = item.imageUrl ?: existing?.imageUrl,
                 )
             }
         }
@@ -281,7 +310,7 @@ fun RecommendationScreen(
                         price = draft.promoPrice.coerceAtLeast(0L),
                         groupId = PROMO_GROUP_ID,
                         code = existing?.code ?: "PRM-${draft.id.takeLast(6).uppercase()}",
-                        imageUrl = existing?.imageUrl,
+                        imageUrl = draft.imageUrl?.trim()?.ifBlank { null } ?: existing?.imageUrl,
                         isActive = true,
                         outletId = outletId,
                     ),
@@ -534,6 +563,11 @@ fun RecommendationScreen(
 
                             val existingBundleId = editingBundleId
                             val resolvedBundleId = existingBundleId ?: IdGenerator.newId("bundle_")
+                            val outletId = currentOutletId()
+                            val (resolvedBundleImageUrl, bundleUploadError) = resolveServerImageUrlOrKeepLocal(
+                                imageUrl = bundleImageUrl.trim().ifBlank { null },
+                                outletId = outletId,
+                            )
                             val draft = BundleDraft(
                                 id = resolvedBundleId,
                                 name = name,
@@ -541,7 +575,7 @@ fun RecommendationScreen(
                                 endDate = bundleEndDate.trim(),
                                 price = price,
                                 items = bundleItems,
-                                imageUrl = bundleImageUrl.trim().ifBlank { null },
+                                imageUrl = resolvedBundleImageUrl,
                             )
                             val existingIndex = bundles.indexOfFirst { it.id == resolvedBundleId }
                             if (existingIndex >= 0) {
@@ -559,9 +593,9 @@ fun RecommendationScreen(
                                     code = "BND-${draft.id.takeLast(6).uppercase()}",
                                     imageUrl = draft.imageUrl,
                                     isActive = true,
-                                    outletId = currentOutletId(),
+                                    outletId = outletId,
                                 ),
-                                outletId = currentOutletId(),
+                                outletId = outletId,
                             )
                             refreshMenu()
                             syncDraftsWithMenu()
@@ -572,7 +606,12 @@ fun RecommendationScreen(
                                 "Bundle diperbarui."
                             }
                             resetBundleEditor()
-                            syncMenuAfterChange(successPrefix)
+                            val successWithUploadNote = if (!bundleUploadError.isNullOrBlank()) {
+                                "$successPrefix Foto masih lokal: $bundleUploadError"
+                            } else {
+                                successPrefix
+                            }
+                            syncMenuAfterChange(successWithUploadNote)
                         },
                         onCancelEdit = ::resetBundleEditor,
                     )
@@ -609,6 +648,13 @@ fun RecommendationScreen(
                         onPromoDiscountPercentChange = {
                             promoDiscountPercent = it.filter(Char::isDigit).take(2)
                         },
+                        promoImageUrl = promoImageUrl,
+                        onPickPromoImage = {
+                            pickImage { picked ->
+                                if (!picked.isNullOrBlank()) promoImageUrl = picked
+                            }
+                        },
+                        onClearPromoImage = { promoImageUrl = "" },
                         onPickPromoStartDate = {
                             pickDate(promoStartDate.takeIf { it.isNotBlank() }) { picked ->
                                 promoStartDate = picked
@@ -654,6 +700,11 @@ fun RecommendationScreen(
                                 return@PromoEditorCard
                             }
 
+                            val outletId = currentOutletId()
+                            val (resolvedPromoImageUrl, promoUploadError) = resolveServerImageUrlOrKeepLocal(
+                                imageUrl = promoImageUrl.trim().ifBlank { null },
+                                outletId = outletId,
+                            )
                             promos.add(
                                 PromoDraft(
                                     id = IdGenerator.newId("promo_"),
@@ -665,6 +716,7 @@ fun RecommendationScreen(
                                     promoPrice = resolvedPrice,
                                     startDate = promoStartDate.trim(),
                                     endDate = promoEndDate.trim(),
+                                    imageUrl = resolvedPromoImageUrl,
                                 )
                             )
 
@@ -679,10 +731,11 @@ fun RecommendationScreen(
                                     price = savedPromo.promoPrice,
                                     groupId = PROMO_GROUP_ID,
                                     code = "PRM-${savedPromo.id.takeLast(6).uppercase()}",
+                                    imageUrl = savedPromo.imageUrl,
                                     isActive = true,
-                                    outletId = currentOutletId(),
+                                    outletId = outletId,
                                 ),
-                                outletId = currentOutletId(),
+                                outletId = outletId,
                             )
 
                             refreshMenu()
@@ -696,8 +749,15 @@ fun RecommendationScreen(
                             promoDiscountPercent = ""
                             promoStartDate = ""
                             promoEndDate = ""
+                            promoImageUrl = ""
 
-                            syncMenuAfterChange("Promo tersimpan (${promos.size} total).")
+                            val promoSuccessPrefix = "Promo tersimpan (${promos.size} total)."
+                            val promoSuccessWithUploadNote = if (!promoUploadError.isNullOrBlank()) {
+                                "$promoSuccessPrefix Foto masih lokal: $promoUploadError"
+                            } else {
+                                promoSuccessPrefix
+                            }
+                            syncMenuAfterChange(promoSuccessWithUploadNote)
                         },
                     )
                 }
@@ -880,6 +940,7 @@ private fun encodePromos(promos: List<PromoDraft>): String {
             promo.promoPrice.toString(),
             promo.startDate,
             promo.endDate,
+            promo.imageUrl.orEmpty(),
         ).joinToString(FIELD_SEPARATOR)
     }
 }
@@ -890,7 +951,7 @@ private fun decodePromos(raw: String): List<PromoDraft> {
         .mapNotNull { row ->
             val cols = row.split(FIELD_SEPARATOR)
 
-            if (cols.size >= 9) {
+            if (cols.size >= 10) {
                 PromoDraft(
                     id = cols[0],
                     name = cols[1],
@@ -901,6 +962,20 @@ private fun decodePromos(raw: String): List<PromoDraft> {
                     promoPrice = cols[6].toLongOrNull() ?: 0L,
                     startDate = cols[7],
                     endDate = cols[8],
+                    imageUrl = cols[9].takeIf { it.isNotBlank() },
+                )
+            } else if (cols.size >= 9) {
+                PromoDraft(
+                    id = cols[0],
+                    name = cols[1],
+                    itemId = cols[2],
+                    itemName = cols[3],
+                    qty = cols[4].toIntOrNull()?.coerceAtLeast(1) ?: 1,
+                    discountPercent = cols[5].toIntOrNull() ?: 0,
+                    promoPrice = cols[6].toLongOrNull() ?: 0L,
+                    startDate = cols[7],
+                    endDate = cols[8],
+                    imageUrl = null,
                 )
             } else if (cols.size >= 8) {
                 PromoDraft(
@@ -913,6 +988,7 @@ private fun decodePromos(raw: String): List<PromoDraft> {
                     promoPrice = cols[5].toLongOrNull() ?: 0L,
                     startDate = cols[6],
                     endDate = cols[7],
+                    imageUrl = null,
                 )
             } else {
                 null
@@ -1280,6 +1356,7 @@ private fun PromoEditorCard(
     promoQty: String,
     promoPrice: String,
     promoDiscountPercent: String,
+    promoImageUrl: String,
     promoStartDate: String,
     promoEndDate: String,
     onPromoNameChange: (String) -> Unit,
@@ -1288,6 +1365,8 @@ private fun PromoEditorCard(
     onIncreasePromoQty: () -> Unit,
     onPromoPriceChange: (String) -> Unit,
     onPromoDiscountPercentChange: (String) -> Unit,
+    onPickPromoImage: () -> Unit,
+    onClearPromoImage: () -> Unit,
     onPickPromoStartDate: () -> Unit,
     onPickPromoEndDate: () -> Unit,
     onSelectProduct: (String?) -> Unit,
@@ -1392,6 +1471,30 @@ private fun PromoEditorCard(
                 singleLine = true,
             )
         }
+
+        Text("Foto promo", style = MaterialTheme.typography.titleSmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(
+                onClick = onPickPromoImage,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text(if (promoImageUrl.isBlank()) "Pilih Foto dari Galeri" else "Ganti Foto")
+            }
+            if (promoImageUrl.isNotBlank()) {
+                OutlinedButton(
+                    onClick = onClearPromoImage,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Hapus Foto")
+                }
+            }
+        }
+        ProductImageBanner(
+            imageUrl = promoImageUrl,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(150.dp),
+        )
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             DateActionField(
@@ -1530,6 +1633,12 @@ private fun RecommendationPromoRow(
     val qty = promo.qty.coerceAtLeast(1)
 
     AppCard {
+        ProductImageBanner(
+            imageUrl = promo.imageUrl,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(120.dp),
+        )
         AppInfoLine("Promo", promo.name, emphasized = true)
         AppInfoLine("Produk", "${promo.itemName} x$qty")
         AppInfoLine("Harga Promo Total", formatRupiah(promo.promoPrice))
