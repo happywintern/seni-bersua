@@ -664,7 +664,6 @@ function TableOrderingPage() {
                     <h3>{item.name}</h3>
                     <p className="subtext">{item.id.toUpperCase()}</p>
                     <p className="price-text">{formatRp(item.price)}</p>
-                    <p className="subtext">Stok: 50</p>
                     {qty <= 0 ? (
                       <button className="btn btn-primary btn-fill" onClick={() => openCustomizer(item, "add")}>
                         {hasModifier ? "Pilih" : "Tambah"}

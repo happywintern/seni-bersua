@@ -147,6 +147,30 @@ function App() {
     return "Nikmati keseimbangan rasa sempurna dalam setiap menu pilihan kami.";
   }, [menuLoadError]);
 
+  const recommendationCards = useMemo(() => {
+    const liveCards = menuItems
+      .filter((item) => {
+        const category = (item.category || "").trim().toLowerCase();
+        return category === "bundle" || category === "promo";
+      })
+      .map((item, index) => {
+        const isPromo = (item.category || "").trim().toLowerCase() === "promo";
+        return {
+          badge: isPromo ? "Promo" : "Bundle",
+          title: item.name,
+          description: item.ingredients || "Rekomendasi dari menu outlet aktif.",
+          price: item.priceLabel || item.price || "Rp 0",
+          originalPrice: "",
+          image: item.imageUrl || rendaSesuaImage,
+          accent: item.accent || "linear-gradient(135deg, #f5e6d0, #e8d5c4)",
+          id: item.id || `rekom_${index}`,
+        };
+      });
+
+    if (liveCards.length > 0) return liveCards;
+    return bundles.map((bundle, index) => ({ ...bundle, id: `fallback_bundle_${index}` }));
+  }, [menuItems]);
+
   function scrollCarousel(direction) {
     const element = menuCarouselRef.current;
     if (!element) return;
@@ -292,8 +316,8 @@ function App() {
             <div className="section-sub">Pilih kategori menu kami untuk melihat detail racikan spesial yang kami siapkan khusus untukmu.</div>
           </div>
 
-          {bundles.map((bundle) => (
-            <article key={bundle.title} className="bundle-card">
+          {recommendationCards.map((bundle) => (
+            <article key={bundle.id || bundle.title} className="bundle-card">
               <div className="bundle-img">
                 <img src={bundle.image} alt="" className="bundle-side-image" />
                 <div className="bundle-img-placeholder" style={{ background: bundle.accent }}></div>
@@ -305,7 +329,7 @@ function App() {
                 <div className="bundle-footer">
                   <div>
                     <div className="bundle-price">
-                      {bundle.price} <span>{bundle.originalPrice}</span>
+                      {bundle.price} {bundle.originalPrice ? <span>{bundle.originalPrice}</span> : null}
                     </div>
                   </div>
                   <button type="button" className="btn-blue" onClick={() => scrollToSection("menu")}>Lihat di Menu →</button>
