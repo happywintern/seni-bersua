@@ -38,14 +38,13 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
-import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.parseToJsonElement
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -1322,7 +1321,7 @@ private suspend inline fun <reified T> ApplicationCall.receiveApiRequest(): T {
         throw IllegalArgumentException("Request body cannot be empty")
     }
     val envelope = try {
-        apiJsonParser.parseToJsonElement(rawBody).jsonObject
+        apiJsonParser.decodeFromString(JsonObject.serializer(), rawBody)
     } catch (_: SerializationException) {
         throw IllegalArgumentException("Request body must use envelope format {data,message,error}")
     } catch (_: IllegalArgumentException) {
