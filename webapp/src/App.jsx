@@ -159,7 +159,7 @@ function App() {
   }
 
   function navigateToSection(sectionId) {
-    if (isMenuPage || isAboutPage || isReservationPage || isContactPage) {
+    if (isMenuPage || isAboutPage || isReservationPage || isContactPage || isEventPage) {
       window.location.href = `/#${sectionId}`;
       return;
     }
@@ -199,7 +199,7 @@ function App() {
           <button type="button" onClick={navigateToMenuPage}>Menu</button>
           <button type="button" onClick={navigateToAboutPage}>Tentang Kami</button>
           <button type="button" onClick={navigateToReservationPage}>Reservasi</button>
-          <button type="button" onClick={() => navigateToSection("event")}>Event</button>
+
           <button type="button" onClick={navigateToContactPage}>Kontak Kami</button>
           <button type="button" onClick={navigateToWebAdminPage}>Admin</button>
         </div>
@@ -356,7 +356,7 @@ function App() {
           <div className="footer-section">
             <div className="footer-title">Informasi</div>
             <a href="/web/about">Tentang Kami</a>
-            <a href="/event">Event</a>
+            <a href="/web/event">Event</a>
             <a href="/web/kontak">Kontak Kami</a>
           </div>
 
