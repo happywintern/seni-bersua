@@ -1,0 +1,30 @@
+FROM gradle:8-jdk21 AS build
+WORKDIR /workspace
+
+COPY gradle gradle
+COPY gradlew gradlew
+COPY gradlew.bat gradlew.bat
+COPY settings.gradle.kts settings.gradle.kts
+COPY build.gradle.kts build.gradle.kts
+COPY gradle.properties gradle.properties
+COPY composeApp composeApp
+COPY shared shared
+COPY server server
+
+RUN chmod +x gradlew
+RUN ./gradlew :server:installDist --no-daemon
+
+FROM eclipse-temurin:21-jre
+WORKDIR /opt/sucash
+
+COPY --from=build /workspace/server/build/install/server/ ./
+
+ENV SUCASH_SERVER_HOST=0.0.0.0
+ENV SUCASH_SERVER_PORT=1000
+ENV SUCASH_SERVER_DB_PATH=/data/sucash-server.db
+ENV SUCASH_MEDIA_UPLOAD_DIR=/data/uploads
+
+EXPOSE 1000
+VOLUME ["/data"]
+
+CMD ["bin/server"]

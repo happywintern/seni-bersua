@@ -10,6 +10,7 @@ data class ServerMenuItemDto(
     val price: Long,
     @SerialName("groupId") val groupId: String? = null,
     @SerialName("groupName") val groupName: String? = null,
+    @SerialName("imageUrl") val imageUrl: String? = null,
     @SerialName("outletId") val outletId: String? = null,
 )
 

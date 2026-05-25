@@ -52,6 +52,7 @@ Main keys:
 - `SUCASH_SERVER_HOST` (default `0.0.0.0`)
 - `SUCASH_SERVER_PORT` (default `8080`)
 - `SUCASH_SERVER_DB_PATH` (default `data/sucash-server.db`)
+- `SUCASH_MEDIA_UPLOAD_DIR` (default `data/uploads`, for product image file storage)
 - `TURSO_DATABASE_URL` (when set, server uses Turso/libSQL as primary DB)
 - `TURSO_AUTH_TOKEN` (required for protected Turso DB, keep secret)
 - `SUCASH_MIGRATE_LOCAL_SQLITE_TO_TURSO` (optional one-time bootstrap copy; `true/false`)
@@ -70,6 +71,39 @@ Run server:
 ```bash
 ./gradlew :server:run
 ```
+
+## Production Docker (VPS)
+
+Container ports are set inside requested range `1000-1010`:
+
+- Server API: `1000`
+- Webapp: `1001`
+
+Build and run:
+
+```bash
+docker compose build
+docker compose up -d
+```
+
+Open:
+
+- `http://<vps-ip>:1000` (Ktor server + API)
+- `http://<vps-ip>:1001/web/` (React webapp)
+
+Useful commands:
+
+```bash
+docker compose logs -f server
+docker compose logs -f webapp
+docker compose down
+```
+
+Notes:
+
+- `docker-compose.yml` loads root `.env` automatically into `server` via `env_file`.
+- DB + uploaded media persist in Docker volume `sucash-server-data` (`/data/sucash-server.db` and `/data/uploads`).
+- Webapp `/api/*` is reverse-proxied by Nginx to `server:1000`, so browser CORS is not required.
 
 If you see:
 
@@ -173,6 +207,7 @@ API endpoints used by the React web UI:
 
 - `GET /api/menu?outlet=...`
 - `POST /api/menu/upsert`
+- `POST /api/media/menu-image/upload` (multipart file upload, returns `image_url`)
 - `POST /api/menu/{id}/delete?outlet=...`
 - `GET /api/customers`
 - `GET /api/customers/{uuid}`

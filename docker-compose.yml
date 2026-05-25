@@ -1,0 +1,34 @@
+services:
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: sucash-server
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      SUCASH_SERVER_HOST: 0.0.0.0
+      SUCASH_SERVER_PORT: 1000
+      SUCASH_SERVER_DB_PATH: /data/sucash-server.db
+      SUCASH_MEDIA_UPLOAD_DIR: /data/uploads
+    ports:
+      - "1000:1000"
+    volumes:
+      - sucash-server-data:/data
+
+  webapp:
+    build:
+      context: .
+      dockerfile: Dockerfile.webapp
+      args:
+        VITE_API_BASE_URL: ""
+    container_name: sucash-webapp
+    restart: unless-stopped
+    depends_on:
+      - server
+    ports:
+      - "1001:1001"
+
+volumes:
+  sucash-server-data:

@@ -1,0 +1,12 @@
+.git
+.gradle
+.idea
+build
+**/build
+**/.kotlin
+**/node_modules
+webapp/dist
+local.properties
+*.iml
+.DS_Store
+Thumbs.db

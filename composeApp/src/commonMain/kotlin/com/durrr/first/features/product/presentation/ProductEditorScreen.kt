@@ -97,6 +97,7 @@ fun ProductEditorScreen(
     settingsRepository: SettingsRepository,
     menuSyncRepository: MenuSyncRepository,
     pickImage: ((String?) -> Unit) -> Unit = { onPicked -> onPicked(null) },
+    uploadMenuImage: suspend (baseUrl: String, localUri: String, outletId: String) -> String? = { _, _, _ -> null },
     itemId: String?,
     onManageModifiers: () -> Unit = {},
     onSaved: () -> Unit,
@@ -171,25 +172,46 @@ fun ProductEditorScreen(
                 .map { it.id },
         )
 
-        val model = Item(
-            id = resolvedItemId,
-            name = name,
-            price = price,
-            groupId = selectedGroupId,
-            code = itemCode.trim().ifBlank { null },
-            imageUrl = itemImageUrl.trim().ifBlank { null },
-            isActive = itemActive,
-            outletId = outletId,
-        )
-        repo.upsertItem(model, outletId)
-        repo.assignModifierGroupsToItem(model.id, selectedModifierGroupIds.toList(), outletId)
         scope.launch {
+            var resolvedImageUrl = itemImageUrl.trim().ifBlank { null }
             val baseUrl = serverBaseUrl()
+            if (
+                !baseUrl.isNullOrBlank() &&
+                !resolvedImageUrl.isNullOrBlank() &&
+                (
+                    resolvedImageUrl.startsWith("content://", ignoreCase = true) ||
+                        resolvedImageUrl.startsWith("file://", ignoreCase = true)
+                    )
+            ) {
+                val uploadedImageUrl = runCatching {
+                    uploadMenuImage(baseUrl, resolvedImageUrl, outletId)
+                }.getOrNull()
+                if (!uploadedImageUrl.isNullOrBlank()) {
+                    resolvedImageUrl = uploadedImageUrl
+                    itemImageUrl = uploadedImageUrl
+                } else {
+                    statusMessage = "Foto masih lokal di device. Koneksi server diperlukan untuk upload foto."
+                }
+            }
+
+            val model = Item(
+                id = resolvedItemId,
+                name = name,
+                price = price,
+                groupId = selectedGroupId,
+                code = itemCode.trim().ifBlank { null },
+                imageUrl = resolvedImageUrl,
+                isActive = itemActive,
+                outletId = outletId,
+            )
+            repo.upsertItem(model, outletId)
+            repo.assignModifierGroupsToItem(model.id, selectedModifierGroupIds.toList(), outletId)
+
             if (baseUrl != null) runCatching {
                 menuSyncRepository.pushToServer(baseUrl, outletId)
             }
+            onSaved()
         }
-        onSaved()
     }
 
     ProductEditorContent(

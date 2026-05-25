@@ -10,5 +10,11 @@ data class UpsertMenuItemRequest(
     val price: Long,
     @SerialName("group_id") val groupId: String? = null,
     @SerialName("group_name") val groupName: String? = null,
+    @SerialName("image_url") val imageUrl: String? = null,
     @SerialName("outlet_id") val outletId: String? = null,
+)
+
+@Serializable
+data class MenuImageUploadResponse(
+    @SerialName("image_url") val imageUrl: String,
 )

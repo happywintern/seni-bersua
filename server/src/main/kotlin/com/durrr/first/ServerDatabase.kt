@@ -126,6 +126,7 @@ data class MenuItem(
     val price: Long,
     val groupId: String? = null,
     val groupName: String? = null,
+    val imageUrl: String? = null,
     val outletId: String = DEFAULT_OUTLET_ID,
 )
 
@@ -1393,7 +1394,7 @@ object ServerDatabase {
         val scopedOutletId = normalizeOutletId(outletId)
         connection.prepareStatement(
             """
-            SELECT id, name, price, group_id, group_name, outlet_id
+            SELECT id, name, price, group_id, group_name, image_url, outlet_id
             FROM menu_item
             WHERE outlet_id = ?
             ORDER BY name ASC
@@ -1416,6 +1417,7 @@ object ServerDatabase {
                                 price = rs.getLong("price"),
                                 groupId = resolvedGroupId,
                                 groupName = resolvedGroupName,
+                                imageUrl = rs.getString("image_url"),
                                 outletId = rs.getString("outlet_id") ?: DEFAULT_OUTLET_ID,
                             )
                         )
@@ -1434,6 +1436,7 @@ object ServerDatabase {
                 price = it.price,
                 groupId = it.groupId,
                 groupName = it.groupName,
+                imageUrl = it.imageUrl,
                 outletId = it.outletId,
             )
         }
@@ -1480,16 +1483,18 @@ object ServerDatabase {
         val id = request.id?.trim().takeUnless { it.isNullOrBlank() } ?: UUID.randomUUID().toString()
         val groupId = request.groupId?.trim()?.takeIf { it.isNotBlank() }
         val groupName = normalizeCatalogNameOrNull(request.groupName)
+        val imageUrl = request.imageUrl?.trim()?.takeIf { it.isNotBlank() }
         val now = Instant.now().toString()
         connection.prepareStatement(
             """
-            INSERT INTO menu_item(id, name, price, created_at, group_id, group_name, outlet_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO menu_item(id, name, price, created_at, group_id, group_name, image_url, outlet_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 price = excluded.price,
                 group_id = excluded.group_id,
                 group_name = excluded.group_name,
+                image_url = excluded.image_url,
                 outlet_id = excluded.outlet_id
             """.trimIndent()
         ).use { statement ->
@@ -1499,10 +1504,19 @@ object ServerDatabase {
             statement.setString(4, now)
             statement.setString(5, groupId)
             statement.setString(6, groupName)
-            statement.setString(7, outletId)
+            statement.setString(7, imageUrl)
+            statement.setString(8, outletId)
             executeWrite(statement)
         }
-        MenuItem(id = id, name = name, price = request.price, groupId = groupId, groupName = groupName, outletId = outletId)
+        MenuItem(
+            id = id,
+            name = name,
+            price = request.price,
+            groupId = groupId,
+            groupName = groupName,
+            imageUrl = imageUrl,
+            outletId = outletId,
+        )
     }
 
     fun deleteMenu(menuId: String, outletId: String = DEFAULT_OUTLET_ID): Boolean = withConnection { connection ->
@@ -2278,6 +2292,7 @@ object ServerDatabase {
                     created_at TEXT NOT NULL,
                     group_id TEXT,
                     group_name TEXT,
+                    image_url TEXT,
                     outlet_id TEXT NOT NULL DEFAULT 'default'
                 )
                 """.trimIndent()
@@ -2348,6 +2363,9 @@ object ServerDatabase {
             }
             runCatching {
                 statement.execute("ALTER TABLE menu_item ADD COLUMN group_name TEXT")
+            }
+            runCatching {
+                statement.execute("ALTER TABLE menu_item ADD COLUMN image_url TEXT")
             }
             runCatching {
                 statement.execute("ALTER TABLE order_header ADD COLUMN outlet_id TEXT NOT NULL DEFAULT 'default'")
@@ -2649,6 +2667,7 @@ object ServerDatabase {
                 created_at TEXT NOT NULL,
                 group_id TEXT,
                 group_name TEXT,
+                image_url TEXT,
                 outlet_id TEXT NOT NULL DEFAULT 'default'
             )
             """.trimIndent(),
@@ -2894,6 +2913,7 @@ object ServerDatabase {
             "ALTER TABLE menu_item ADD COLUMN outlet_id TEXT NOT NULL DEFAULT 'default'",
             "ALTER TABLE menu_item ADD COLUMN group_id TEXT",
             "ALTER TABLE menu_item ADD COLUMN group_name TEXT",
+            "ALTER TABLE menu_item ADD COLUMN image_url TEXT",
             "ALTER TABLE order_header ADD COLUMN outlet_id TEXT NOT NULL DEFAULT 'default'",
             "ALTER TABLE order_item ADD COLUMN note TEXT",
             "ALTER TABLE transaksi_header ADD COLUMN outlet_id TEXT NOT NULL DEFAULT 'default'",
@@ -3508,7 +3528,7 @@ object ServerDatabase {
     private fun listMenuTransactional(connection: Connection, outletId: String): List<MenuItem> {
         connection.prepareStatement(
             """
-            SELECT id, name, price, group_id, group_name, outlet_id
+            SELECT id, name, price, group_id, group_name, image_url, outlet_id
             FROM menu_item
             WHERE outlet_id = ?
             """.trimIndent()
@@ -3530,6 +3550,7 @@ object ServerDatabase {
                                 price = rs.getLong("price"),
                                 groupId = resolvedGroupId,
                                 groupName = resolvedGroupName,
+                                imageUrl = rs.getString("image_url"),
                                 outletId = rs.getString("outlet_id") ?: DEFAULT_OUTLET_ID,
                             )
                         )

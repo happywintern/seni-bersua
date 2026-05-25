@@ -3,6 +3,7 @@ package com.durrr.first
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.PartData
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.*
@@ -13,6 +14,7 @@ import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.netty.*
 import io.ktor.server.request.host
 import io.ktor.server.request.path
+import io.ktor.server.request.receiveMultipart
 import io.ktor.server.request.receiveText
 import io.ktor.server.response.*
 import io.ktor.server.routing.get
@@ -27,6 +29,7 @@ import com.durrr.first.network.dto.ServerAuthUserStatusRequest
 import com.durrr.first.network.dto.ServerAuthUserUpsertRequest
 import com.durrr.first.network.dto.ServerOutletStatusRequest
 import com.durrr.first.network.dto.ServerOutletUpsertRequest
+import com.durrr.first.network.dto.MenuImageUploadResponse
 import com.durrr.first.network.dto.UpsertMenuItemRequest
 import com.durrr.first.network.dto.UpsertModifierGroupRequest
 import com.durrr.first.network.dto.TransactionBatchRequest
@@ -119,12 +122,14 @@ fun Application.module() {
 
     routing {
         val webDistDir = resolveWebDistDirectory()
+        val mediaUploadDir = resolveMediaUploadDirectory().apply { mkdirs() }
         if (webDistDir != null) {
             log.info("Serving React webapp from: ${webDistDir.absolutePath}")
             staticFiles("/web", webDistDir)
         } else {
             log.warn("React webapp dist not found. Falling back to bundled web resources.")
         }
+        staticFiles("/media", mediaUploadDir)
 
         get("/web") {
             call.respondWebIndex(webDistDir)
@@ -663,6 +668,63 @@ fun Application.module() {
                     }
                     call.respondApiSuccess(data = updated, message = "Outlet status updated")
                 }
+            }
+
+            post("/media/menu-image/upload") {
+                var outletIdFromForm: String? = null
+                var originalFileName: String? = null
+                var fileBytes: ByteArray? = null
+                var fileContentType: String? = null
+
+                val multipart = call.receiveMultipart()
+                multipart.forEachPart { part ->
+                    when (part) {
+                        is PartData.FormItem -> if (part.name == "outlet_id") {
+                            outletIdFromForm = part.value.trim()
+                        }
+                        is PartData.FileItem -> if (part.name == "file") {
+                            originalFileName = part.originalFileName
+                            fileContentType = part.contentType?.toString()
+                            fileBytes = part.streamProvider().readBytes()
+                        }
+                        else -> Unit
+                    }
+                    part.dispose()
+                }
+
+                val scopedOutletId = call.requireScopedOutletId(
+                    rawOutletId = outletIdFromForm,
+                    source = "outlet_id",
+                ) ?: return@post
+                if (!call.ensureActiveOutlet(scopedOutletId)) return@post
+                if (!call.requireApiRoleForOutlet(scopedOutletId, "OWNER")) return@post
+                val bytes = fileBytes
+                if (bytes == null || bytes.isEmpty()) {
+                    call.respondApiError(
+                        status = HttpStatusCode.BadRequest,
+                        message = "Image upload failed",
+                        error = "Missing image file",
+                    )
+                    return@post
+                }
+                if (bytes.size > MAX_MENU_IMAGE_BYTES) {
+                    call.respondApiError(
+                        status = HttpStatusCode.PayloadTooLarge,
+                        message = "Image upload failed",
+                        error = "Max file size is 5 MB",
+                    )
+                    return@post
+                }
+                val imageUrl = saveMenuImageFile(
+                    outletId = scopedOutletId,
+                    originalFileName = originalFileName,
+                    contentType = fileContentType,
+                    bytes = bytes,
+                )
+                call.respondApiSuccess(
+                    data = MenuImageUploadResponse(imageUrl = imageUrl),
+                    message = "Image uploaded",
+                )
             }
 
             get("/menu") {
@@ -1234,6 +1296,50 @@ private fun resolveWebDistDirectory(): File? {
     return resolved.takeIf { it.exists() && it.isDirectory }
 }
 
+private const val MAX_MENU_IMAGE_BYTES = 5 * 1024 * 1024
+
+private fun resolveMediaUploadDirectory(): File {
+    val configuredPath = EnvConfig.get("SUCASH_MEDIA_UPLOAD_DIR", "data/uploads").orEmpty()
+        .ifBlank { "data/uploads" }
+    val configuredFile = File(configuredPath)
+    return if (configuredFile.isAbsolute) {
+        configuredFile
+    } else {
+        File(System.getProperty("user.dir"), configuredPath)
+    }
+}
+
+private fun saveMenuImageFile(
+    outletId: String,
+    originalFileName: String?,
+    contentType: String?,
+    bytes: ByteArray,
+): String {
+    val extension = inferImageExtension(originalFileName, contentType)
+    val fileName = "${System.currentTimeMillis()}-${UUID.randomUUID()}.$extension"
+    val outletSafe = outletId.trim().ifBlank { DEFAULT_API_OUTLET_ID }
+        .replace(Regex("[^a-zA-Z0-9_-]"), "_")
+    val relativePath = "menu/$outletSafe/$fileName"
+    val targetFile = resolveMediaUploadDirectory().resolve(relativePath)
+    targetFile.parentFile?.mkdirs()
+    targetFile.writeBytes(bytes)
+    return "/media/$relativePath"
+}
+
+private fun inferImageExtension(originalFileName: String?, contentType: String?): String {
+    val fromName = originalFileName
+        ?.substringAfterLast('.', missingDelimiterValue = "")
+        ?.lowercase()
+        ?.takeIf { it in setOf("jpg", "jpeg", "png", "webp", "gif") }
+    if (fromName != null) return fromName
+    return when (contentType?.lowercase()) {
+        "image/png" -> "png"
+        "image/webp" -> "webp"
+        "image/gif" -> "gif"
+        else -> "jpg"
+    }
+}
+
 private fun contentTypeForFile(path: String): ContentType {
     return when (path.substringAfterLast('.', missingDelimiterValue = "").lowercase()) {
         "js", "mjs" -> ContentType.Application.JavaScript
@@ -1250,6 +1356,7 @@ private fun contentTypeForFile(path: String): ContentType {
 }
 
 private val apiJsonParser = Json {
+    prettyPrint = true
     ignoreUnknownKeys = true
     isLenient = true
 }

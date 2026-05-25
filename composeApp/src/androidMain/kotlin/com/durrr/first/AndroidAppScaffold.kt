@@ -315,6 +315,7 @@ fun AndroidAppScaffold(
                                 settingsRepository = dependencies.settingsRepository,
                                 menuSyncRepository = dependencies.menuSyncRepository,
                                 pickImage = dependencies.pickImage,
+                                uploadMenuImage = dependencies.uploadMenuImage,
                                 itemId = rawItemId?.takeUnless { it == "new" },
                                 onManageModifiers = { navController.navigate(MODIFIER_GROUP_ROUTE) },
                                 onSaved = { navController.popBackStack() },

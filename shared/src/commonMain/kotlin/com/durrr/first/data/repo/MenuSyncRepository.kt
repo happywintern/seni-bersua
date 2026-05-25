@@ -84,7 +84,7 @@ class MenuSyncRepository(
                             price = remoteItem.price,
                             groupId = canonicalGroupId,
                             code = local?.code,
-                            imageUrl = local?.imageUrl,
+                            imageUrl = remoteItem.imageUrl ?: local?.imageUrl,
                             isActive = true,
                             outletId = remoteItem.outletId ?: outletId,
                         ),
@@ -132,7 +132,7 @@ class MenuSyncRepository(
                     price = remoteItem.price,
                     groupId = canonicalGroupId,
                     code = local?.code,
-                    imageUrl = local?.imageUrl,
+                    imageUrl = remoteItem.imageUrl ?: local?.imageUrl,
                     isActive = true,
                     outletId = remoteItem.outletId ?: outletId,
                 ),
@@ -217,6 +217,13 @@ class MenuSyncRepository(
                 val resolvedGroupName = groupNameById[resolvedGroupId]
                     ?.takeIf { it.isNotBlank() && !it.equals("Kategori", ignoreCase = true) }
                     ?: fallbackGroupName
+                val syncImageUrl = item.imageUrl
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() }
+                    ?.takeUnless {
+                        it.startsWith("content://", ignoreCase = true) ||
+                            it.startsWith("file://", ignoreCase = true)
+                    }
                 withNetworkRetry {
                     apiClient.upsertMenuItem(
                         baseUrl = baseUrl,
@@ -225,6 +232,7 @@ class MenuSyncRepository(
                         price = item.price,
                         groupId = resolvedGroupId,
                         groupName = resolvedGroupName,
+                        imageUrl = syncImageUrl,
                         outletId = outletId,
                         bearerToken = bearerToken,
                     )

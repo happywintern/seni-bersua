@@ -34,6 +34,7 @@ class AppDependencies(
     val todayDate: () -> String,
     val launchScanner: () -> Unit,
     val pickImage: ((String?) -> Unit) -> Unit,
+    val uploadMenuImage: suspend (baseUrl: String, localUri: String, outletId: String) -> String?,
     val pickDate: (initialIso: String?, onPicked: (String) -> Unit) -> Unit,
     val shareText: (subject: String, payload: String) -> Unit,
     val printHtml: (jobName: String, htmlPayload: String) -> Unit,

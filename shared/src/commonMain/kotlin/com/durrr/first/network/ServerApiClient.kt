@@ -1,6 +1,7 @@
 package com.durrr.first.network
 
 import com.durrr.first.network.dto.DailyRecapResponse
+import com.durrr.first.network.dto.MenuImageUploadResponse
 import com.durrr.first.network.dto.RecapRangeDto
 import com.durrr.first.network.dto.RecapSummaryResponse
 import com.durrr.first.network.dto.ApiEnvelopeDto
@@ -44,6 +45,9 @@ import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
+import io.ktor.client.request.forms.MultiPartFormDataContent
+import io.ktor.client.request.forms.formData
+import io.ktor.http.Headers
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.serialization.kotlinx.json.json
@@ -135,6 +139,7 @@ class ServerApiClient {
         price: Long,
         groupId: String? = null,
         groupName: String? = null,
+        imageUrl: String? = null,
         outletId: String? = null,
         bearerToken: String? = null,
     ): ServerMenuItemDto {
@@ -152,6 +157,7 @@ class ServerApiClient {
                         price = price,
                         groupId = groupId,
                         groupName = groupName,
+                        imageUrl = imageUrl,
                         outletId = outletId,
                     ),
                     message = "Upsert menu item request",
@@ -175,6 +181,42 @@ class ServerApiClient {
                 parameter("outlet", outletId)
             }
         }.ensureApiSuccess(endpoint)
+    }
+
+    suspend fun uploadMenuImage(
+        baseUrl: String,
+        imageBytes: ByteArray,
+        fileName: String,
+        contentType: String,
+        outletId: String? = null,
+        bearerToken: String? = null,
+    ): MenuImageUploadResponse {
+        val url = normalizeBaseUrl(baseUrl)
+        val endpoint = "$url/api/media/menu-image/upload"
+        return client.post("$url/api/media/menu-image/upload") {
+            header(HttpHeaders.Connection, "close")
+            attachBearerToken(bearerToken)
+            setBody(
+                MultiPartFormDataContent(
+                    formData {
+                        if (!outletId.isNullOrBlank()) {
+                            append("outlet_id", outletId)
+                        }
+                        append(
+                            key = "file",
+                            value = imageBytes,
+                            headers = Headers.build {
+                                append(
+                                    HttpHeaders.ContentDisposition,
+                                    """form-data; name="file"; filename="$fileName"""",
+                                )
+                                append(HttpHeaders.ContentType, contentType)
+                            },
+                        )
+                    },
+                ),
+            )
+        }.unwrapApiData(endpoint)
     }
 
     suspend fun upsertModifierGroup(

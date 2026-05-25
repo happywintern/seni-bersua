@@ -75,6 +75,18 @@ fun rememberAppDependencies(
             settingsRepository = settingsRepository,
         )
     }
+    val uploadMenuImage = remember {
+        suspend { baseUrl: String, localUri: String, outletId: String ->
+            uploadMenuImageFromUri(
+                context = context,
+                apiClient = apiClient,
+                settingsRepository = settingsRepository,
+                baseUrl = baseUrl,
+                localUri = localUri,
+                outletId = outletId,
+            )
+        }
+    }
     val transaksiSyncRepository = remember {
         TransaksiSyncRepository(
             syncRepository = syncRepository,
@@ -105,6 +117,7 @@ fun rememberAppDependencies(
         todayDate = { dateFormatter.format(Date()) },
         launchScanner = launchScanner,
         pickImage = pickImage,
+        uploadMenuImage = uploadMenuImage,
         pickDate = pickDate,
         shareText = shareText,
         printHtml = printHtml,
