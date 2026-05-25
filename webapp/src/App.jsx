@@ -199,7 +199,7 @@ function App() {
           <button type="button" onClick={navigateToMenuPage}>Menu</button>
           <button type="button" onClick={navigateToAboutPage}>Tentang Kami</button>
           <button type="button" onClick={navigateToReservationPage}>Reservasi</button>
-          <button type="button" onClick={navigateToEventPage}>Event</button>
+
           <button type="button" onClick={navigateToContactPage}>Kontak Kami</button>
           <button type="button" onClick={navigateToWebAdminPage}>Admin</button>
         </div>
@@ -212,8 +212,6 @@ function App() {
           <AboutPage />
         ) : isReservationPage ? (
           <ReservationPage />
-        ) : isEventPage ? (
-          <EventPage />
         ) : isContactPage ? (
           <ContactPage />
         ) : isWebAdminPage ? (
